@@ -6,14 +6,14 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Stylized Aquatic Leaf Accent (Secondary Aquamarine) -->
+    <!-- Stylized Aquatic Leaf Accent (Secondary Fern) -->
     <path
         android:pathData="M64,77 C71,72 76,62 73,48 C68,56 62,63 55,66 C60,71 62,75 64,77 Z"
-        android:fillColor="#3300E676" />
+        android:fillColor="#337CE778" />
     <path
         android:pathData="M61,75 C68,70 73,61 70,50 C66,57 60,63 55,66"
         android:strokeWidth="1.5"
-        android:strokeColor="#00E676"
+        android:strokeColor="#7CE778"
         android:strokeLineCap="round" />
 
     <!-- CO2 Gas Cylinder Body (Centered around X=49, Y=58) -->
@@ -26,10 +26,10 @@
                 android:endX="60"
                 android:endY="60"
                 android:type="linear">
-                <item android:offset="0.0" android:color="#FF1A2634" />
-                <item android:offset="0.3" android:color="#FF2E3E50" />
-                <item android:offset="0.7" android:color="#FF243242" />
-                <item android:offset="1.0" android:color="#FF131C26" />
+                <item android:offset="0.0" android:color="#FF162E1D" />
+                <item android:offset="0.3" android:color="#FF244830" />
+                <item android:offset="0.7" android:color="#FF1C3825" />
+                <item android:offset="1.0" android:color="#FF0F2215" />
             </gradient>
         </aapt:attr>
     </path>
@@ -38,13 +38,13 @@
     <path
         android:pathData="M38,47 C38,42 43,40 49,40 C55,40 60,42 60,47 L60,73 C60,78 56,80 49,80 C42,80 38,78 38,73 Z"
         android:strokeWidth="1.2"
-        android:strokeColor="#FF385066" />
+        android:strokeColor="#FF2E5639" />
 
-    <!-- Sleek Neon Cyan Indicator Slit -->
+    <!-- Sleek Lush Emerald Indicator Slit -->
     <path
         android:pathData="M49,48 L49,71"
         android:strokeWidth="2.5"
-        android:strokeColor="#00E5FF"
+        android:strokeColor="#2EE576"
         android:strokeLineCap="round" />
 
     <!-- Specular Highlight Strip -->
@@ -57,38 +57,38 @@
     <!-- Cylinder Neck -->
     <path
         android:pathData="M46.5,36.5 L51.5,36.5 L51.5,40 L46.5,40 Z"
-        android:fillColor="#FF78909C" />
+        android:fillColor="#FF6E9178" />
 
     <!-- Pressure Regulator / Valve Block -->
     <path
         android:pathData="M44,32 L54,32 L54,36.5 L44,36.5 Z"
-        android:fillColor="#FF90A4AE" />
+        android:fillColor="#FF92B59B" />
 
     <!-- Top Valve Handwheel / Knob -->
     <path
         android:pathData="M45.5,29.5 L52.5,29.5 L52.5,32 L45.5,32 Z"
-        android:fillColor="#FF00E5FF" />
+        android:fillColor="#FF2EE576" />
 
     <!-- Mini Pressure Gauge Dial -->
     <path
         android:pathData="M57,34 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0"
-        android:fillColor="#FF131B24"
+        android:fillColor="#FF0F2215"
         android:strokeWidth="1"
-        android:strokeColor="#00E5FF" />
+        android:strokeColor="#2EE576" />
     <!-- Gauge needle -->
     <path
         android:pathData="M57,34 L59,32"
         android:strokeWidth="1"
-        android:strokeColor="#00E676"
+        android:strokeColor="#7CE778"
         android:strokeLineCap="round" />
 
     <!-- Rising CO2 Micro-bubbles -->
     <!-- Bubble 1 -->
     <path
         android:pathData="M63,27 m-2.3,0 a2.3,2.3 0 1,0 4.6,0 a2.3,2.3 0 1,0 -4.6,0"
-        android:fillColor="#4400E5FF"
+        android:fillColor="#442EE576"
         android:strokeWidth="1"
-        android:strokeColor="#00E5FF" />
+        android:strokeColor="#2EE576" />
     <path
         android:pathData="M62,26.3 L62.6,25.7"
         android:strokeWidth="0.7"
@@ -98,9 +98,9 @@
     <!-- Bubble 2 -->
     <path
         android:pathData="M68,21 m-2.5,0 a2.5,2.5 0 1,0 5,0 a2.5,2.5 0 1,0 -5,0"
-        android:fillColor="#3300E676"
+        android:fillColor="#337CE778"
         android:strokeWidth="1"
-        android:strokeColor="#00E676" />
+        android:strokeColor="#7CE778" />
     <path
         android:pathData="M67,20.2 L67.6,19.6"
         android:strokeWidth="0.7"
@@ -110,6 +110,6 @@
     <!-- Bubble 3 (Tiny) -->
     <path
         android:pathData="M61,19.5 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0"
-        android:fillColor="#8800E5FF" />
+        android:fillColor="#882EE576" />
 
 </vector>

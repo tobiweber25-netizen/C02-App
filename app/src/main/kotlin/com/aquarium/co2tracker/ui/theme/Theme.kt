@@ -4,22 +4,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
-private val AquariumDarkColorScheme = darkColorScheme(
-  primary = NeonCyanPrimary,
-  onPrimary = NeonCyanOnPrimary,
-  primaryContainer = NeonCyanPrimaryDim,
+private val ForestDarkColorScheme = darkColorScheme(
+  primary = ForestEmeraldPrimary,
+  onPrimary = ForestEmeraldOnPrimary,
+  primaryContainer = ForestEmeraldPrimaryDim,
   onPrimaryContainer = TextPrimaryDark,
-  secondary = AquamarineSecondary,
-  onSecondary = AquamarineOnSecondary,
-  secondaryContainer = AquamarineSecondaryDim,
+  secondary = ForestFernSecondary,
+  onSecondary = ForestFernOnSecondary,
+  secondaryContainer = ForestFernSecondaryDim,
   onSecondaryContainer = TextPrimaryDark,
-  background = CarbonBackground,
+  background = ForestDeepBackground,
   onBackground = TextPrimaryDark,
-  surface = DarkSurfaceCard,
+  surface = ForestSurfaceCard,
   onSurface = TextPrimaryDark,
-  surfaceVariant = DarkSurfaceCardElevated,
+  surfaceVariant = ForestSurfaceCardElevated,
   onSurfaceVariant = TextSecondaryDark,
-  outline = DarkSurfaceBorder,
+  outline = ForestSurfaceBorder,
   error = StatusCritical,
   onError = TextPrimaryDark
 )
@@ -29,7 +29,7 @@ fun CO2CylinderTrackerTheme(
   content: @Composable () -> Unit
 ) {
   MaterialTheme(
-    colorScheme = AquariumDarkColorScheme,
+    colorScheme = ForestDarkColorScheme,
     typography = Typography,
     content = content
   )
