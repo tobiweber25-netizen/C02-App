@@ -20,18 +20,27 @@ android {
     applicationId = "com.aquarium.co2tracker"
     minSdk = 29
     targetSdk = 36
-    versionCode = 3
-    versionName = "1.0.2"
+    versionCode = 4
+    versionName = "1.0.3"
 
     buildConfigField("String", "GITHUB_REPO_OWNER", "\"${localProperties.getProperty("GITHUB_REPO_OWNER") ?: "tobiweber25-netizen"}\"")
     buildConfigField("String", "GITHUB_REPO_NAME", "\"${localProperties.getProperty("GITHUB_REPO_NAME") ?: "C02-App"}\"")
     buildConfigField("String", "GITHUB_TOKEN", "\"${localProperties.getProperty("GITHUB_TOKEN") ?: ""}\"")
   }
 
+  signingConfigs {
+    create("release") {
+      storeFile = file("keystore/debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
+    }
+  }
+
   buildTypes {
     release {
       isMinifyEnabled = false
-      signingConfig = signingConfigs.getByName("debug")
+      signingConfig = signingConfigs.getByName("release")
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
   }
