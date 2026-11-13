@@ -20,8 +20,8 @@ android {
     applicationId = "com.aquarium.co2tracker"
     minSdk = 29
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.0.1"
 
     buildConfigField("String", "GITHUB_REPO_OWNER", "\"${localProperties.getProperty("GITHUB_REPO_OWNER") ?: "tobiweber25-netizen"}\"")
     buildConfigField("String", "GITHUB_REPO_NAME", "\"${localProperties.getProperty("GITHUB_REPO_NAME") ?: "C02-App"}\"")

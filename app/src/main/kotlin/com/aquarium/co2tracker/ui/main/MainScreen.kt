@@ -117,7 +117,7 @@ fun MainScreen(
           }
 
           // Notification & Device Reliability Diagnostics Button
-          IconButton(onClick = { viewModel.showSettingsDialog(true) }) {
+          IconButton(onClick = { viewModel.setActiveTab(DashboardTab.SETTINGS) }) {
             Text(text = "🔔", fontSize = FontSizeTokens.titleSm)
           }
         },
@@ -137,72 +137,7 @@ fun MainScreen(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
           CircularProgressIndicator(color = NeonCyanPrimary)
         }
-      } else if (uiState.projection == null) {
-        // Clean unconfigured / first run onboarding prompt
-        Box(
-          modifier = Modifier
-            .fillMaxSize()
-            .padding(Spacing.screenPadding),
-          contentAlignment = Alignment.Center
-        ) {
-          Card(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(Radius.lg))
-              .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(Radius.lg)),
-            colors = CardDefaults.cardColors(containerColor = DarkSurfaceCard)
-          ) {
-            Column(
-              modifier = Modifier
-                .fillMaxWidth()
-                .padding(Spacing.xl),
-              horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-              Text(
-                text = "⚡",
-                fontSize = FontSizeTokens.display
-              )
-
-              Spacer(modifier = Modifier.height(Spacing.sm))
-
-              Text(
-                text = "No Cylinder Configured",
-                fontSize = FontSizeTokens.title,
-                fontWeight = FontWeight.ExtraBold,
-                color = TextPrimaryDark
-              )
-
-              Spacer(modifier = Modifier.height(Spacing.xs))
-
-              Text(
-                text = "AquaCO2 Pulse is running without demo or filler data. Configure your cylinder's tare and gross weights to activate physics depletion tracking and advance refill alerts.",
-                fontSize = FontSizeTokens.bodySm,
-                color = TextSecondaryDark
-              )
-
-              Spacer(modifier = Modifier.height(Spacing.lg))
-
-              Button(
-                onClick = { viewModel.showSetupDialog(true) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                  containerColor = NeonCyanPrimary,
-                  contentColor = NeonCyanOnPrimary
-                ),
-                shape = RoundedCornerShape(Radius.md)
-              ) {
-                Text(
-                  text = "Configure Cylinder Now",
-                  fontWeight = FontWeight.Bold,
-                  fontSize = FontSizeTokens.body
-                )
-              }
-            }
-          }
-        }
       } else {
-        val projection = uiState.projection!!
-
         Column(
           modifier = Modifier
             .fillMaxSize()
@@ -210,7 +145,11 @@ fun MainScreen(
         ) {
           // Navigation Tab Row
           SecondaryTabRow(
-            selectedTabIndex = if (uiState.activeTab == DashboardTab.DASHBOARD) 0 else 1,
+            selectedTabIndex = when (uiState.activeTab) {
+              DashboardTab.DASHBOARD -> 0
+              DashboardTab.HISTORY -> 1
+              DashboardTab.SETTINGS -> 2
+            },
             containerColor = DarkSurfaceCard,
             contentColor = NeonCyanPrimary,
             modifier = Modifier
@@ -234,9 +173,20 @@ fun MainScreen(
               onClick = { viewModel.setActiveTab(DashboardTab.HISTORY) },
               text = {
                 Text(
-                  text = "History Ledger (${uiState.events.size})",
+                  text = "History (${uiState.events.size})",
                   fontWeight = FontWeight.Bold,
                   color = if (uiState.activeTab == DashboardTab.HISTORY) NeonCyanPrimary else TextSecondaryDark
+                )
+              }
+            )
+            Tab(
+              selected = uiState.activeTab == DashboardTab.SETTINGS,
+              onClick = { viewModel.setActiveTab(DashboardTab.SETTINGS) },
+              text = {
+                Text(
+                  text = "Settings",
+                  fontWeight = FontWeight.Bold,
+                  color = if (uiState.activeTab == DashboardTab.SETTINGS) NeonCyanPrimary else TextSecondaryDark
                 )
               }
             )
@@ -246,31 +196,97 @@ fun MainScreen(
 
           when (uiState.activeTab) {
             DashboardTab.DASHBOARD -> {
-              Column(
-                modifier = Modifier
-                  .fillMaxSize()
-                  .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(Spacing.normal)
-              ) {
-                // 1. Visual Gauge & CO2 Net Mass Card
-                VisualCylinderGauge(projection = projection)
+              if (uiState.projection == null) {
+                // Clean unconfigured / first run onboarding prompt
+                Box(
+                  modifier = Modifier
+                    .fillMaxSize()
+                    .padding(vertical = Spacing.screenPadding),
+                  contentAlignment = Alignment.Center
+                ) {
+                  Card(
+                    modifier = Modifier
+                      .fillMaxWidth()
+                      .clip(RoundedCornerShape(Radius.lg))
+                      .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(Radius.lg)),
+                    colors = CardDefaults.cardColors(containerColor = DarkSurfaceCard)
+                  ) {
+                    Column(
+                      modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(Spacing.xl),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                      Text(
+                        text = "⚡",
+                        fontSize = FontSizeTokens.display
+                      )
 
-                // 2. Refill Window & Alert Countdown Badge
-                RefillWindowCard(projection = projection)
+                      Spacer(modifier = Modifier.height(Spacing.sm))
 
-                // 3. Active Settings & Burn-down Physics Summary
-                ActiveSettingsSummaryCard(projection = projection)
+                      Text(
+                        text = "No Cylinder Configured",
+                        fontSize = FontSizeTokens.title,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = TextPrimaryDark
+                      )
 
-                // 4. Quick Actions Row (BPS, Schedule, Downtime, Scale Check-In, Reset)
-                QuickActionsRow(
-                  onBpsClick = { viewModel.showBpsDialog(true) },
-                  onScheduleClick = { viewModel.showScheduleDialog(true) },
-                  onDowntimeClick = { viewModel.showDowntimeDialog(true) },
-                  onScaleClick = { viewModel.showScaleCalibrationDialog(true) },
-                  onRefillResetClick = { viewModel.showSetupDialog(true) }
-                )
+                      Spacer(modifier = Modifier.height(Spacing.xs))
 
-                Spacer(modifier = Modifier.height(Spacing.xl))
+                      Text(
+                        text = "AquaCO2 Pulse is running without demo or filler data. Configure your cylinder's tare and gross weights to activate physics depletion tracking and advance refill alerts.",
+                        fontSize = FontSizeTokens.bodySm,
+                        color = TextSecondaryDark
+                      )
+
+                      Spacer(modifier = Modifier.height(Spacing.lg))
+
+                      Button(
+                        onClick = { viewModel.showSetupDialog(true) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                          containerColor = NeonCyanPrimary,
+                          contentColor = NeonCyanOnPrimary
+                        ),
+                        shape = RoundedCornerShape(Radius.md)
+                      ) {
+                        Text(
+                          text = "Configure Cylinder Now",
+                          fontWeight = FontWeight.Bold,
+                          fontSize = FontSizeTokens.body
+                        )
+                      }
+                    }
+                  }
+                }
+              } else {
+                val projection = uiState.projection!!
+                Column(
+                  modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState()),
+                  verticalArrangement = Arrangement.spacedBy(Spacing.normal)
+                ) {
+                  // 1. Visual Gauge & CO2 Net Mass Card
+                  VisualCylinderGauge(projection = projection)
+
+                  // 2. Refill Window & Alert Countdown Badge
+                  RefillWindowCard(projection = projection)
+
+                  // 3. Active Settings & Burn-down Physics Summary
+                  ActiveSettingsSummaryCard(projection = projection)
+
+                  // 4. Quick Actions Row (BPS, Schedule, Downtime, Scale Check-In, Reset)
+                  QuickActionsRow(
+                    onBpsClick = { viewModel.showBpsDialog(true) },
+                    onScheduleClick = { viewModel.showScheduleDialog(true) },
+                    onDowntimeClick = { viewModel.showDowntimeDialog(true) },
+                    onScaleClick = { viewModel.showScaleCalibrationDialog(true) },
+                    onRefillResetClick = { viewModel.showSetupDialog(true) }
+                  )
+
+                  Spacer(modifier = Modifier.height(Spacing.xl))
+                }
               }
             }
 
@@ -280,40 +296,52 @@ fun MainScreen(
                 onDeleteEvent = { eventId -> viewModel.deleteEvent(eventId) }
               )
             }
+
+            DashboardTab.SETTINGS -> {
+              SettingsView(
+                projection = uiState.projection,
+                onCheckForUpdates = { triggerUpdateCheck() },
+                onTriggerTestNotification = { viewModel.triggerTestNotification() },
+                onConfigureCylinder = { viewModel.showSetupDialog(true) }
+              )
+            }
           }
         }
 
         // Projection-dependent Dialogs
-        if (uiState.showBpsDialog) {
-          BpsUpdateDialog(
-            projection = projection,
-            onDismiss = { viewModel.showBpsDialog(false) },
-            onConfirm = { newBps -> viewModel.updateBps(newBps) }
-          )
-        }
+        val projection = uiState.projection
+        if (projection != null) {
+          if (uiState.showBpsDialog) {
+            BpsUpdateDialog(
+              projection = projection,
+              onDismiss = { viewModel.showBpsDialog(false) },
+              onConfirm = { newBps -> viewModel.updateBps(newBps) }
+            )
+          }
 
-        if (uiState.showScheduleDialog) {
-          ScheduleUpdateDialog(
-            projection = projection,
-            onDismiss = { viewModel.showScheduleDialog(false) },
-            onConfirm = { sMin, eMin -> viewModel.updateSchedule(sMin, eMin) }
-          )
-        }
+          if (uiState.showScheduleDialog) {
+            ScheduleUpdateDialog(
+              projection = projection,
+              onDismiss = { viewModel.showScheduleDialog(false) },
+              onConfirm = { sMin, eMin -> viewModel.updateSchedule(sMin, eMin) }
+            )
+          }
 
-        if (uiState.showDowntimeDialog) {
-          DowntimeOverrideDialog(
-            projection = projection,
-            onDismiss = { viewModel.showDowntimeDialog(false) },
-            onConfirm = { hoursDelta, note -> viewModel.logDowntime(hoursDelta, note) }
-          )
-        }
+          if (uiState.showDowntimeDialog) {
+            DowntimeOverrideDialog(
+              projection = projection,
+              onDismiss = { viewModel.showDowntimeDialog(false) },
+              onConfirm = { hoursDelta, note -> viewModel.logDowntime(hoursDelta, note) }
+            )
+          }
 
-        if (uiState.showScaleCalibrationDialog) {
-          ScaleCheckInDialog(
-            projection = projection,
-            onDismiss = { viewModel.showScaleCalibrationDialog(false) },
-            onConfirm = { scaleWeight -> viewModel.logScaleCalibration(scaleWeight) }
-          )
+          if (uiState.showScaleCalibrationDialog) {
+            ScaleCheckInDialog(
+              projection = projection,
+              onDismiss = { viewModel.showScaleCalibrationDialog(false) },
+              onConfirm = { scaleWeight -> viewModel.logScaleCalibration(scaleWeight) }
+            )
+          }
         }
       }
 

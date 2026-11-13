@@ -17,7 +17,8 @@ import kotlinx.coroutines.launch
 
 enum class DashboardTab {
   DASHBOARD,
-  HISTORY
+  HISTORY,
+  SETTINGS
 }
 
 data class Co2UiState(
