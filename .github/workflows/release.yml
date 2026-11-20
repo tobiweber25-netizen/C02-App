@@ -35,12 +35,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Populate local.properties from GitHub Secrets
+      - name: Populate local.properties for Android SDK
         run: |
           echo "sdk.dir=/usr/local/lib/android/sdk" > local.properties
-          if [ -n "${{ secrets.GITHUB_TOKEN }}" ]; then
-            echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}" >> local.properties
-          fi
 
       - name: Grant Execute Permission for Gradlew
         run: chmod +x gradlew
