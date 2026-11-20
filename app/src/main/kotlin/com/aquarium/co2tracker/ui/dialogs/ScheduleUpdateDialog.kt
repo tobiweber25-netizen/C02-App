@@ -13,7 +13,11 @@ import com.aquarium.co2tracker.domain.Co2PhysicsEngine
 import com.aquarium.co2tracker.domain.CylinderProjection
 import com.aquarium.co2tracker.ui.components.*
 import com.aquarium.co2tracker.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun ScheduleUpdateDialog(
@@ -49,11 +53,15 @@ fun ScheduleUpdateDialog(
   val startTotalMinutes = sH * 60 + sM
   val endTotalMinutes = eH * 60 + eM
   val previewActiveHours = Co2PhysicsEngine.calculateActiveSolenoidHoursPerDay(startTotalMinutes, endTotalMinutes)
-  val previewDailyBurn = Co2PhysicsEngine.calculateDailyBurnRateGrams(
-    bps = projection.currentBps,
-    gramsPerBubbleCoefficient = projection.activeGramsPerBubble,
-    activeSolenoidHoursPerDay = previewActiveHours
-  )
+  val whatIf = remember(projection, startTotalMinutes, endTotalMinutes) {
+    Co2PhysicsEngine.previewWhatIfChange(
+      projection = projection,
+      newStartMinutes = startTotalMinutes,
+      newEndMinutes = endTotalMinutes
+    )
+  }
+  val previewDailyBurn = whatIf.newDailyBurnGrams
+  val dateFormatter = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
 
   AquaModalSheet(
     title = "Solenoid Photoperiod",
@@ -164,6 +172,30 @@ fun ScheduleUpdateDialog(
           endMinutes = endTotalMinutes,
           nowMinuteOfDay = currentLocalMinuteOfDay()
         )
+        if (projection.hasActiveBurn && !projection.isBelowDangerThreshold) {
+          Spacer(modifier = Modifier.height(Spacing.sm))
+          val deltaDays = whatIf.cutoffDeltaDays.roundToInt()
+          val deltaTag = when {
+            abs(deltaDays) == 0 -> "no change"
+            deltaDays > 0 -> "+${deltaDays}d longer"
+            else -> "${deltaDays}d earlier"
+          }
+          val deltaColor = when {
+            deltaDays < 0 -> DropCheckerAmber
+            deltaDays > 0 -> DropCheckerOptimal
+            else -> InkSecondary
+          }
+          Text(
+            text = "New cutoff: ${dateFormatter.format(Date(whatIf.newCutoffMillis))} ($deltaTag)",
+            style = AquaTextStyles.caption,
+            color = deltaColor
+          )
+          Text(
+            text = "Estimated empty (0g): ${dateFormatter.format(Date(whatIf.newEmptyMillis))}",
+            style = AquaTextStyles.caption,
+            color = InkSecondary
+          )
+        }
       }
     }
 

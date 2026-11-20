@@ -535,4 +535,184 @@ class Co2PhysicsEngineTest {
     assertNull(Co2PhysicsEngine.parseDecimalInput("abc"))
     assertNull(Co2PhysicsEngine.parseDecimalInput("NaN"))
   }
+
+  @Test
+  fun testTapToMeasureBubbleCounter_SteadyAndStaleGapReset() {
+    // 5 taps spaced 500ms apart = exact 2.0 BPS, steady rhythm
+    val steadyTaps = listOf(1000L, 1500L, 2000L, 2500L, 3000L)
+    val result = Co2PhysicsEngine.calculateBpsFromTapTimestamps(steadyTaps)
+    assertNotNull(result)
+    assertEquals(2.0, result!!.bps, 0.01)
+    assertTrue("Consistent 500ms taps must be steady", result.isSteady)
+    assertEquals(5, result.tapCount)
+
+    // Stale tap 30 seconds earlier must be ignored (only latest burst used)
+    val withStalePrefix = listOf(1_000L, 40_000L, 41_000L, 42_000L, 43_000L)
+    val burstResult = Co2PhysicsEngine.calculateBpsFromTapTimestamps(withStalePrefix)
+    assertNotNull(burstResult)
+    assertEquals(1.0, burstResult!!.bps, 0.01)
+    assertEquals(4, burstResult.tapCount)
+
+    // Erratic intervals should NOT report steady
+    val erratic = listOf(1000L, 1200L, 2500L, 2700L, 4500L)
+    val erraticResult = Co2PhysicsEngine.calculateBpsFromTapTimestamps(erratic)
+    assertNotNull(erraticResult)
+    assertFalse("Erratic taps must not report steady", erraticResult!!.isSteady)
+  }
+
+  @Test
+  fun testLivePauseFreezesBurnAndCountsOnlyActiveSolenoidHours() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val pauseAtNoon = epochMillis(2026, 5, 1, 12, 0) // 1.5 active hrs since 10:30
+    val checkAt3Pm = epochMillis(2026, 5, 1, 15, 0)  // +3.0 active hrs paused
+
+    val config = CylinderConfig(
+      tareWeightGrams = 3350.0,
+      fullGrossWeightGrams = 4850.0,
+      setupTimestampMillis = setupTime,
+      solenoidStartMinutes = 10 * 60 + 30,
+      solenoidEndMinutes = 18 * 60,
+      startingBps = 1.5,
+      pausedSinceMillis = pauseAtNoon
+    )
+
+    val projAtPause = Co2PhysicsEngine.evaluateLedger(config.copy(pausedSinceMillis = null), emptyList(), pauseAtNoon, fixedZone)
+    val projWhilePaused = Co2PhysicsEngine.evaluateLedger(config, emptyList(), checkAt3Pm, fixedZone)
+
+    assertTrue(projWhilePaused.isPaused)
+    assertEquals(projAtPause.remainingCo2Grams, projWhilePaused.remainingCo2Grams, 1e-6)
+    assertEquals(3.0, projWhilePaused.pausedMissedSolenoidHours, 1e-6)
+
+    // Pausing during OFF hours (19:00 -> 08:00 next morning) counts 0.0 missed solenoid hours
+    val eveningPause = epochMillis(2026, 5, 1, 19, 0)
+    val morningCheck = epochMillis(2026, 5, 2, 8, 0)
+    val offHoursPaused = Co2PhysicsEngine.evaluateLedger(
+      config.copy(pausedSinceMillis = eveningPause),
+      emptyList(),
+      morningCheck,
+      fixedZone
+    )
+    assertEquals(0.0, offHoursPaused.pausedMissedSolenoidHours, 1e-6)
+  }
+
+  @Test
+  fun testCarryOverCalibrationAndHistoricalSealDriftDetection() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val carriedCoeff = 0.00020
+    val config = CylinderConfig(
+      tareWeightGrams = 3350.0,
+      fullGrossWeightGrams = 4850.0,
+      setupTimestampMillis = setupTime,
+      solenoidStartMinutes = 10 * 60,
+      solenoidEndMinutes = 18 * 60,
+      startingBps = 1.5,
+      carriedGramsPerBubble = carriedCoeff
+    )
+
+    val projDay0 = Co2PhysicsEngine.evaluateLedger(config, emptyList(), setupTime, fixedZone)
+    assertTrue("Carried calibration should lock accuracy from Day 1", projDay0.isScaleCalibrated)
+    assertTrue(projDay0.isUsingCarriedCalibration)
+    assertEquals(carriedCoeff, projDay0.activeGramsPerBubble, 1e-9)
+    assertNull("No initial calibration check-in needed when carried", projDay0.recommendedCheckInTimestampMillis)
+
+    // Compare against archived fills where rate was 0.00020: if a new check-in jumps to 0.00028 (+40%)
+    val day10 = setupTime + 10L * 86_400_000L
+    // 10 days * 8 hrs * 3600 * 1.5 = 432,000 bubbles; 0.00028 * 432,000 = 120.96g burned -> 4729g scale weight
+    val scaleJump = LedgerEvent(
+      id = 2L,
+      cylinderId = config.id,
+      timestampMillis = day10,
+      eventType = LedgerEventType.SCALE_CALIBRATION,
+      bps = 1.5,
+      solenoidStartMinutes = 600,
+      solenoidEndMinutes = 1080,
+      scaleWeightGrams = 4729.0
+    )
+    val projDay10 = Co2PhysicsEngine.evaluateLedger(config, listOf(scaleJump), day10, fixedZone)
+    val archive = listOf(
+      RefillArchiveEntry(
+        id = 1L,
+        cylinderId = 1L,
+        cylinderName = "Primary",
+        startedAtMillis = setupTime - 150L * 86_400_000L,
+        endedAtMillis = setupTime,
+        initialNetGrams = 1500.0,
+        consumedGrams = 1350.0,
+        durationDays = 150.0,
+        avgDailyBurnGrams = 9.0,
+        calibratedGramsPerBubble = 0.00020,
+        wasCalibrated = true
+      )
+    )
+    val driftPct = Co2PhysicsEngine.detectHistoricalSealDriftPercent(projDay10, archive)
+    assertNotNull("40% rise over past fills should trigger seal drift notice", driftPct)
+    assertTrue("Expected ~40% drift, got $driftPct", driftPct!! in 35..45)
+  }
+
+  @Test
+  fun testWhatIfPreviewShiftsRunwayDatesCorrectly() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val config = CylinderConfig(
+      tareWeightGrams = 3350.0,
+      fullGrossWeightGrams = 4850.0,
+      setupTimestampMillis = setupTime,
+      solenoidStartMinutes = 10 * 60,
+      solenoidEndMinutes = 18 * 60,
+      startingBps = 1.5,
+      carriedGramsPerBubble = 0.00020
+    )
+    val base = Co2PhysicsEngine.evaluateLedger(config, emptyList(), setupTime, fixedZone)
+
+    val higherBps = Co2PhysicsEngine.previewWhatIfChange(base, newBps = 3.0, nowMillis = setupTime, zoneId = fixedZone)
+    assertTrue("Doubling BPS must move cutoff significantly earlier", higherBps.cutoffDeltaDays < -50.0)
+    assertTrue(higherBps.newEmptyMillis < base.emptyTimestampMillis)
+
+    val shorterSchedule = Co2PhysicsEngine.previewWhatIfChange(
+      base,
+      newStartMinutes = 11 * 60,
+      newEndMinutes = 17 * 60, // 6h instead of 8h
+      nowMillis = setupTime,
+      zoneId = fixedZone
+    )
+    assertTrue("Shortening daily window must extend cutoff date", shorterSchedule.cutoffDeltaDays > 30.0)
+  }
+
+  @Test
+  fun testRefillShopOpenDaysShiftsWeekendAlertToFriday() {
+    // 2026-05-10 is a Sunday!
+    val sundayAlert = epochMillis(2026, 5, 10, 14, 0)
+    val minAllowed = epochMillis(2026, 5, 1, 9, 0)
+
+    val (alignedMillis, wasShifted) = Co2PhysicsEngine.alignTimestampToOpenShopDays(
+      candidateMillis = sundayAlert,
+      shopDaysMask = CylinderConfig.WEEKDAYS_MASK, // Mon-Fri only
+      minAllowedMillis = minAllowed,
+      zoneId = fixedZone
+    )
+    assertTrue("Sunday alert must shift when shop is weekdays-only", wasShifted)
+    val alignedDate = java.time.Instant.ofEpochMilli(alignedMillis).atZone(fixedZone)
+    assertEquals(java.time.DayOfWeek.FRIDAY, alignedDate.dayOfWeek)
+    assertEquals(8, alignedDate.dayOfMonth) // Friday May 8, 2026
+  }
+
+  @Test
+  fun testSpareAndNeedsRefillBottleStatusesDoNotBurn() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val tenDaysLater = setupTime + 10L * 86_400_000L
+
+    val spareFull = CylinderConfig(
+      tareWeightGrams = 3350.0,
+      fullGrossWeightGrams = 4850.0,
+      setupTimestampMillis = setupTime,
+      bottleStatus = BottleStatus.SPARE_FULL
+    )
+    val spareProj = Co2PhysicsEngine.evaluateLedger(spareFull, emptyList(), tenDaysLater, fixedZone)
+    assertEquals(1500.0, spareProj.remainingCo2Grams, 1e-6)
+    assertFalse(spareProj.hasActiveBurn)
+
+    val needsRefill = spareFull.copy(bottleStatus = BottleStatus.NEEDS_REFILL)
+    val emptyProj = Co2PhysicsEngine.evaluateLedger(needsRefill, emptyList(), tenDaysLater, fixedZone)
+    assertEquals(0.0, emptyProj.remainingCo2Grams, 1e-6)
+    assertTrue(emptyProj.isEmpty)
+  }
 }

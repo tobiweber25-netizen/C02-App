@@ -10,6 +10,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -26,8 +27,11 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import com.aquarium.co2tracker.domain.BottleStatus
 import com.aquarium.co2tracker.domain.CylinderProjection
 import com.aquarium.co2tracker.ui.theme.*
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.roundToInt
@@ -60,7 +64,10 @@ private val VesselBubbleSeeds = listOf(
 fun VisualCylinderGauge(
   projection: CylinderProjection,
   modifier: Modifier = Modifier,
-  nowMinuteOfDay: Int = currentLocalMinuteOfDay()
+  nowMinuteOfDay: Int = currentLocalMinuteOfDay(),
+  bottleCount: Int = 1,
+  needsRefillCount: Int = 0,
+  onOpenFleetClick: (() -> Unit)? = null
 ) {
   val targetFill = (projection.remainingTotalPercent / 100.0).toFloat().coerceIn(0f, 1f)
   val animatedFill by animateFloatAsState(
@@ -328,22 +335,51 @@ fun VisualCylinderGauge(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Column(modifier = Modifier.weight(1f)) {
-          Text(
-            text = projection.config.cylinderName,
-            style = AquaTextStyles.cardTitle,
-            color = InkPrimary
-          )
+        Column(
+          modifier = Modifier
+            .weight(1f)
+            .then(
+              if (onOpenFleetClick != null) Modifier.clickable(onClick = onOpenFleetClick) else Modifier
+            )
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+          ) {
+            Text(
+              text = projection.config.cylinderName,
+              style = AquaTextStyles.cardTitle,
+              color = InkPrimary
+            )
+            if (onOpenFleetClick != null) {
+              AquaStatusPill(
+                label = when {
+                  needsRefillCount > 0 -> "$bottleCount • $needsRefillCount REFILL"
+                  bottleCount > 1 -> "$bottleCount BOTTLES"
+                  else -> "FLEET"
+                },
+                accentColor = if (needsRefillCount > 0) DropCheckerAmber else StarphireCyan,
+                showPulseDot = needsRefillCount > 0
+              )
+            }
+          }
           Spacer(modifier = Modifier.height(Spacing.xxs))
+          val pauseTimeStr = projection.pausedSinceMillis?.let {
+            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(it))
+          }
           Text(
             text = when {
+              projection.config.bottleStatus == BottleStatus.SPARE_FULL -> "Full spare ready • tap fleet to swap in"
+              projection.config.bottleStatus == BottleStatus.NEEDS_REFILL -> "Marked empty • awaiting refill"
+              projection.isPaused && pauseTimeStr != null ->
+                String.format(Locale.US, "Paused since %s • %.1fh missed", pauseTimeStr, projection.pausedMissedSolenoidHours)
               !projection.hasActiveBurn -> "Paused • 0 BPS"
               projection.isEmpty -> "Empty • weigh canister now"
               isDosingNow -> "Active • ${projection.currentBps} BPS"
               else -> "Standby • ON ${formatMinuteOfDay(projection.currentStartMinutes)}"
             },
             style = AquaTextStyles.caption,
-            color = InkSecondary
+            color = if (projection.isPaused) DropCheckerAmber else InkSecondary
           )
         }
 
@@ -355,18 +391,28 @@ fun VisualCylinderGauge(
         ) {
           AquaStatusPill(
             label = when {
-              !projection.hasActiveBurn -> "PAUSED"
+              projection.config.bottleStatus == BottleStatus.SPARE_FULL -> "SPARE"
+              projection.config.bottleStatus == BottleStatus.NEEDS_REFILL -> "REFILL"
+              projection.isPaused -> "PAUSED"
+              !projection.hasActiveBurn -> "0 BPS"
               isDosingNow -> "DOSING"
               else -> "STANDBY"
             },
             accentColor = when {
+              projection.config.bottleStatus == BottleStatus.SPARE_FULL -> StarphireCyan
+              projection.config.bottleStatus == BottleStatus.NEEDS_REFILL -> DropCheckerCoral
+              projection.isPaused -> DropCheckerAmber
               !projection.hasActiveBurn -> DropCheckerAqua
               isDosingNow -> PearlEmerald
               else -> StarphireCyan
             }
           )
           AquaStatusPill(
-            label = if (projection.isScaleCalibrated) "SCALE LOCKED" else "GAS LAW",
+            label = when {
+              projection.isUsingCarriedCalibration -> "CARRIED RATE"
+              projection.isScaleCalibrated -> "SCALE LOCKED"
+              else -> "GAS LAW"
+            },
             accentColor = if (projection.isScaleCalibrated) DropCheckerOptimal else DropCheckerAqua,
             showPulseDot = false
           )

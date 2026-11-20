@@ -26,6 +26,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.aquarium.co2tracker.BuildConfig
 import com.aquarium.co2tracker.alarm.Co2AlarmScheduler
+import com.aquarium.co2tracker.domain.BottleStatus
+import com.aquarium.co2tracker.domain.CylinderConfig
 import com.aquarium.co2tracker.domain.CylinderProjection
 import com.aquarium.co2tracker.ui.theme.*
 import java.util.Locale
@@ -38,7 +40,9 @@ fun SettingsView(
   onTriggerTestNotification: () -> Unit,
   onConfigureCylinder: () -> Unit,
   modifier: Modifier = Modifier,
-  onEditSettings: (() -> Unit)? = null
+  onEditSettings: (() -> Unit)? = null,
+  allCylinders: List<CylinderProjection> = emptyList(),
+  onOpenBottleFleet: (() -> Unit)? = null
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -137,9 +141,53 @@ fun SettingsView(
             )
           }
         }
+
+        // Refill Shop Open Days Summary
+        if (projection.config.refillShopDaysMask != CylinderConfig.ALL_DAYS_MASK || projection.config.refillShopName.isNotBlank()) {
+          Spacer(modifier = Modifier.height(Spacing.sm))
+          val dayNames = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+          val openDays = dayNames.filterIndexed { i, _ -> (projection.config.refillShopDaysMask and (1 shl i)) != 0 }
+          val shopSummary = buildString {
+            if (projection.config.refillShopName.isNotBlank()) {
+              append(projection.config.refillShopName)
+              append(" • ")
+            }
+            append("Open: ${openDays.joinToString(", ")}")
+          }
+          Text(
+            text = shopSummary,
+            style = AquaTextStyles.caption,
+            color = StarphireCyan
+          )
+        }
       }
 
       Spacer(modifier = Modifier.height(Spacing.normal))
+
+      if (onOpenBottleFleet != null && projection != null) {
+        val spareCount = allCylinders.count { it.config.bottleStatus == BottleStatus.SPARE_FULL }
+        val needsRefillCount = allCylinders.count { it.config.bottleStatus == BottleStatus.NEEDS_REFILL }
+        OutlinedButton(
+          onClick = onOpenBottleFleet,
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(Radius.md),
+          colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = if (needsRefillCount > 0) DropCheckerAmber else StarphireCyan
+          ),
+          border = BorderStroke(
+            StrokeTokens.hairline,
+            (if (needsRefillCount > 0) DropCheckerAmber else StarphireCyan).copy(alpha = AlphaTokens.rimMedium)
+          )
+        ) {
+          val fleetLabel = when {
+            needsRefillCount > 0 -> "Bottle Fleet (${allCylinders.size}) • $needsRefillCount Needs Refill"
+            spareCount > 0 -> "Bottle Fleet (${allCylinders.size}) • $spareCount Full Spare Ready"
+            else -> "Manage Bottle Fleet & Spares (${allCylinders.size.coerceAtLeast(1)})"
+          }
+          Text(text = fleetLabel, style = AquaTextStyles.bodySm, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(modifier = Modifier.height(Spacing.sm))
+      }
 
       if (projection != null && onEditSettings != null) {
         Row(

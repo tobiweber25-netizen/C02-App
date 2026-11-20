@@ -56,6 +56,19 @@
             </intent-filter>
         </receiver>
 
+        <!-- Home Screen Glance & 1-Tap Pause Widget -->
+        <receiver
+            android:name=".widget.Co2WidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.aquarium.co2tracker.ACTION_WIDGET_TOGGLE_PAUSE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/co2_widget_info" />
+        </receiver>
+
         <!-- FileProvider for In-App Wireless Updates -->
         <provider
             android:name="androidx.core.content.FileProvider"

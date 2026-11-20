@@ -34,13 +34,11 @@ class BootReceiver : BroadcastReceiver() {
       scope.launch {
         try {
           val repository = Co2Repository(context)
-          val projection = repository.refreshProjection()
+          val allProjections = repository.getAllProjections()
           if (isPermissionStateChange) {
-            // Upgrade any pending inexact alarm to exact now that permission state changed
-            Co2AlarmScheduler.scheduleExactDepletionAlarm(context, projection)
+            Co2AlarmScheduler.scheduleForAllActive(context, allProjections)
           } else {
-            // Catch up any alert missed while powered off and re-arm the next exact alarm
-            Co2AlarmScheduler.evaluateAndNotifyIfDue(context, projection)
+            Co2AlarmScheduler.evaluateAndNotifyAllActive(context, allProjections)
           }
         } catch (_: Exception) {
           // Graceful catch for direct-boot / credential-encrypted storage before unlock

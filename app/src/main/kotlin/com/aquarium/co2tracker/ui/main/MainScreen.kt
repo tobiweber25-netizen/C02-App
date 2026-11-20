@@ -46,6 +46,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aquarium.co2tracker.domain.BottleStatus
 import com.aquarium.co2tracker.ui.components.*
 import com.aquarium.co2tracker.ui.dialogs.*
 import com.aquarium.co2tracker.ui.theme.*
@@ -71,6 +72,7 @@ fun MainScreen(
   var showUpdateDialog by remember { mutableStateOf(false) }
   var downloadedApkFile by remember { mutableStateOf<java.io.File?>(null) }
   var isEditSettingsMode by remember { mutableStateOf(false) }
+  var isAddBottleMode by remember { mutableStateOf(false) }
   var resumeTick by remember { mutableIntStateOf(0) }
   var liveMinuteOfDay by remember { mutableIntStateOf(currentLocalMinuteOfDay()) }
 
@@ -141,13 +143,18 @@ fun MainScreen(
     onShowScaleSheet = { viewModel.showScaleCalibrationDialog(true) },
     onShowSetupSheet = {
       isEditSettingsMode = false
+      isAddBottleMode = false
       viewModel.showSetupDialog(true)
     },
     onShowEditSettingsSheet = {
       isEditSettingsMode = true
+      isAddBottleMode = false
       viewModel.showSetupDialog(true)
     },
+    onToggleLivePause = viewModel::toggleLivePause,
+    onOpenBottleFleet = { viewModel.showBottleFleetSheet(true) },
     onDeleteEvent = viewModel::deleteEvent,
+    onDeleteArchiveEntry = viewModel::deleteArchiveEntry,
     onTriggerTestNotification = viewModel::triggerTestNotification,
     nowMinuteOfDay = liveMinuteOfDay,
     modifier = modifier
@@ -160,7 +167,7 @@ fun MainScreen(
       BpsUpdateDialog(
         projection = projection,
         onDismiss = { viewModel.showBpsDialog(false) },
-        onConfirm = { newBps -> viewModel.updateBps(newBps) }
+        onConfirm = { newBps, dropChecker -> viewModel.updateBps(newBps, dropChecker) }
       )
     }
 
@@ -189,17 +196,43 @@ fun MainScreen(
     }
   }
 
+  if (uiState.showBottleFleetSheet) {
+    BottleFleetSheet(
+      allCylinders = uiState.allCylinders,
+      activeProjection = uiState.projection,
+      onDismiss = { viewModel.showBottleFleetSheet(false) },
+      onSelectCylinder = { viewModel.selectCylinder(it) },
+      onSwapInSpare = { spareId, carry -> viewModel.swapToSpareBottle(spareId, carry) },
+      onMarkSpareRefilled = { viewModel.markSpareRefilled(it) },
+      onDeleteCylinder = { viewModel.deleteCylinder(it) },
+      onAddNewBottle = {
+        viewModel.showBottleFleetSheet(false)
+        isEditSettingsMode = false
+        isAddBottleMode = true
+        viewModel.showSetupDialog(true)
+      }
+    )
+  }
+
   if (uiState.showSetupDialog) {
-    val editMode = isEditSettingsMode && uiState.projection != null
+    val editMode = isEditSettingsMode && uiState.projection != null && !isAddBottleMode
+    val addMode = isAddBottleMode
+    val prevCalibrated = uiState.projection?.takeIf { it.isScaleCalibrated }?.activeGramsPerBubble
     InitialCylinderSetupDialog(
       currentConfig = uiState.projection?.config,
       isEditSettingsMode = editMode,
-      onDismiss = { viewModel.showSetupDialog(false) },
+      isAddBottleMode = addMode,
+      previousCalibratedCoeff = prevCalibrated,
+      onDismiss = {
+        isAddBottleMode = false
+        viewModel.showSetupDialog(false)
+      },
       onConfirm = { newConfig ->
-        if (editMode) {
-          viewModel.updateCylinderSettings(newConfig)
-        } else {
-          viewModel.resetOrSetupCylinder(newConfig)
+        isAddBottleMode = false
+        when {
+          addMode -> viewModel.addNewCylinder(newConfig, selectImmediately = newConfig.bottleStatus == BottleStatus.ACTIVE)
+          editMode -> viewModel.updateCylinderSettings(newConfig)
+          else -> viewModel.resetOrSetupCylinder(newConfig)
         }
       }
     )
@@ -262,6 +295,9 @@ internal fun MainScreenContent(
   onTriggerTestNotification: () -> Unit,
   modifier: Modifier = Modifier,
   onShowEditSettingsSheet: () -> Unit = onShowSetupSheet,
+  onToggleLivePause: (() -> Unit)? = null,
+  onOpenBottleFleet: (() -> Unit)? = null,
+  onDeleteArchiveEntry: ((Long) -> Unit)? = null,
   nowMinuteOfDay: Int = currentLocalMinuteOfDay()
 ) {
   val ambientGlow = when {
@@ -321,14 +357,23 @@ internal fun MainScreenContent(
                   ) {
                     Spacer(modifier = Modifier.height(Spacing.xs))
 
+                    val needsRefillCount = uiState.allCylinders.count { it.config.bottleStatus == BottleStatus.NEEDS_REFILL }
+                    val bottleCount = uiState.allCylinders.size.coerceAtLeast(1)
+
                     // 1. Living Illuminated CO2 Vessel Hero
                     VisualCylinderGauge(
                       projection = projection,
-                      nowMinuteOfDay = nowMinuteOfDay
+                      nowMinuteOfDay = nowMinuteOfDay,
+                      bottleCount = bottleCount,
+                      needsRefillCount = needsRefillCount,
+                      onOpenFleetClick = onOpenBottleFleet
                     )
 
                     // 2. Refill Horizon & Drop-Checker Status
-                    RefillWindowCard(projection = projection)
+                    RefillWindowCard(
+                      projection = projection,
+                      historicalSealDriftPercent = uiState.historicalSealDriftPercent
+                    )
 
                     // 3. 24-Hour Photoperiod & Burn Telemetry Bento
                     ActiveSettingsSummaryCard(
@@ -345,7 +390,11 @@ internal fun MainScreenContent(
                       onScheduleClick = onShowScheduleSheet,
                       onDowntimeClick = onShowDowntimeSheet,
                       onScaleClick = onShowScaleSheet,
-                      onRefillResetClick = onShowSetupSheet
+                      onRefillResetClick = onShowSetupSheet,
+                      isPaused = projection.isPaused,
+                      pausedMissedHours = projection.pausedMissedSolenoidHours,
+                      canTogglePause = projection.config.bottleStatus == BottleStatus.ACTIVE,
+                      onToggleLivePause = onToggleLivePause
                     )
 
                     Spacer(modifier = Modifier.height(Spacing.dockClearance))
@@ -357,7 +406,9 @@ internal fun MainScreenContent(
                 HistoryLogView(
                   events = uiState.events,
                   evaluatedSegments = uiState.projection?.evaluatedSegments.orEmpty(),
+                  refillArchive = uiState.refillArchive,
                   onDeleteEvent = onDeleteEvent,
+                  onDeleteArchiveEntry = onDeleteArchiveEntry,
                   modifier = Modifier.padding(top = Spacing.xs)
                 )
               }
@@ -369,6 +420,8 @@ internal fun MainScreenContent(
                   onTriggerTestNotification = onTriggerTestNotification,
                   onConfigureCylinder = onShowSetupSheet,
                   onEditSettings = onShowEditSettingsSheet,
+                  allCylinders = uiState.allCylinders,
+                  onOpenBottleFleet = onOpenBottleFleet,
                   modifier = Modifier.padding(top = Spacing.xs)
                 )
               }

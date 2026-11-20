@@ -36,7 +36,8 @@ private fun formatDaysLabel(days: Double): String {
 @Composable
 fun RefillWindowCard(
   projection: CylinderProjection,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  historicalSealDriftPercent: Int? = null
 ) {
   val dateFormatter = SimpleDateFormat("EEE, dd MMM", Locale.getDefault())
   val yearFormatter = SimpleDateFormat("yyyy", Locale.getDefault())
@@ -70,6 +71,16 @@ fun RefillWindowCard(
       headline = "Below safety floor",
       subtext = "End-of-tank dump risk. Est. empty around $emptyDateStr (${formatDaysLabel(projection.daysUntilEmpty)}).",
       reagentTag = "CRITICAL"
+    )
+    projection.isPaused -> RefillBannerState(
+      accent = DropCheckerAmber,
+      headline = "Live CO2 pause active",
+      subtext = String.format(
+        Locale.US,
+        "%.2f active solenoid hrs missed so far. Tap Resume when CO2 is back on.",
+        projection.pausedMissedSolenoidHours
+      ),
+      reagentTag = "PAUSED"
     )
     !projection.hasActiveBurn -> RefillBannerState(
       accent = DropCheckerAqua,
@@ -166,6 +177,29 @@ fun RefillWindowCard(
             text = "Measured weight loss is much faster than normal for your BPS & pressure. Inspect regulator washer, solenoid, and tubing.",
             style = AquaTextStyles.caption,
             color = InkPrimary
+          )
+        }
+      }
+    }
+
+    // Historical Seal-Wear / Drift Warning across Refill Cycles
+    if (!projection.possibleLeakDetected && historicalSealDriftPercent != null && historicalSealDriftPercent >= 25) {
+      Spacer(modifier = Modifier.height(Spacing.md))
+      GlassInsetWell(
+        modifier = Modifier.fillMaxWidth(),
+        borderColor = DropCheckerAmber.copy(alpha = AlphaTokens.rimMedium),
+        contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.sm)
+      ) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+          Text(
+            text = "SEAL WEAR NOTICE (+$historicalSealDriftPercent% VS PAST FILLS)",
+            style = AquaTextStyles.monoMicro,
+            color = DropCheckerAmber
+          )
+          Text(
+            text = "Gas use per bubble is higher than your archived refills. Check your regulator washer and O-rings.",
+            style = AquaTextStyles.caption,
+            color = InkSecondary
           )
         }
       }
@@ -322,13 +356,16 @@ fun RefillWindowCard(
           )
           Spacer(modifier = Modifier.height(Spacing.xxs))
           Text(
-            text = if (projection.hasActiveBurn) {
-              "At $alertTimeStr • ${projection.config.safeLeadTimeDays}d lead"
-            } else {
-              "0 BPS active"
+            text = when {
+              projection.isPaused -> "Paused — resume to arm"
+              projection.hasActiveBurn && projection.alertShiftedForShopDays ->
+                "At $alertTimeStr • shifted for shop days"
+              projection.hasActiveBurn ->
+                "At $alertTimeStr • ${projection.config.safeLeadTimeDays}d lead"
+              else -> "0 BPS active"
             },
             style = AquaTextStyles.caption,
-            color = InkSecondary
+            color = if (projection.alertShiftedForShopDays) StarphireCyan else InkSecondary
           )
         }
       }

@@ -5,10 +5,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aquarium.co2tracker.alarm.Co2AlarmScheduler
 import com.aquarium.co2tracker.data.Co2Repository
+import com.aquarium.co2tracker.domain.Co2PhysicsEngine
 import com.aquarium.co2tracker.domain.CylinderConfig
 import com.aquarium.co2tracker.domain.CylinderProjection
+import com.aquarium.co2tracker.domain.DropCheckerStatus
 import com.aquarium.co2tracker.domain.LedgerEvent
 import com.aquarium.co2tracker.domain.LedgerEventType
+import com.aquarium.co2tracker.domain.RefillArchiveEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +38,11 @@ data class Co2UiState(
   val showScaleCalibrationDialog: Boolean = false,
   val showSetupDialog: Boolean = false,
   val showSettingsDialog: Boolean = false,
-  val infoMessage: String? = null
+  val infoMessage: String? = null,
+  val allCylinders: List<CylinderProjection> = emptyList(),
+  val refillArchive: List<RefillArchiveEntry> = emptyList(),
+  val historicalSealDriftPercent: Int? = null,
+  val showBottleFleetSheet: Boolean = false
 )
 
 class Co2ViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,36 +59,43 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       _uiState.update { it.copy(isLoading = true) }
       repository.initialize()
-      val projection = repository.refreshProjection()
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          isLoading = false,
-          projection = projection,
-          events = sortEventsForHistory(events)
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), projection)
+      syncFullState(clearLoading = true)
     }
   }
 
-  /**
-   * Silently refreshes live CO2 consumption and projection timestamps without triggering
-   * a full-screen loading indicator. Safe to invoke on ON_RESUME and periodic foreground ticks.
-   */
   fun refreshLiveProjection() {
     viewModelScope.launch {
-      val projection = repository.refreshProjection()
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          isLoading = false,
-          projection = projection,
-          events = sortEventsForHistory(events)
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), projection)
+      syncFullState(clearLoading = true)
     }
+  }
+
+  private suspend fun syncFullState(
+    clearLoading: Boolean = false,
+    infoMessage: String? = null,
+    closeDialogs: (Co2UiState) -> Co2UiState = { it }
+  ) {
+    val projection = repository.refreshProjection()
+    val events = repository.getEvents()
+    val allCylinders = repository.getAllProjections()
+    val archive = repository.getRefillArchive()
+    val driftPct = projection?.let {
+      Co2PhysicsEngine.detectHistoricalSealDriftPercent(it, archive)
+    }
+
+    _uiState.update { current ->
+      val updated = closeDialogs(current).copy(
+        isLoading = if (clearLoading) false else current.isLoading,
+        projection = projection,
+        events = sortEventsForHistory(events),
+        allCylinders = allCylinders,
+        refillArchive = archive,
+        historicalSealDriftPercent = driftPct,
+        infoMessage = infoMessage ?: current.infoMessage
+      )
+      updated
+    }
+
+    Co2AlarmScheduler.scheduleForAllActive(getApplication(), allCylinders)
   }
 
   fun setActiveTab(tab: DashboardTab) {
@@ -94,31 +108,28 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
   fun showScaleCalibrationDialog(show: Boolean) = _uiState.update { it.copy(showScaleCalibrationDialog = show) }
   fun showSetupDialog(show: Boolean) = _uiState.update { it.copy(showSetupDialog = show) }
   fun showSettingsDialog(show: Boolean) = _uiState.update { it.copy(showSettingsDialog = show) }
+  fun showBottleFleetSheet(show: Boolean) = _uiState.update { it.copy(showBottleFleetSheet = show) }
   fun clearInfoMessage() = _uiState.update { it.copy(infoMessage = null) }
 
-  fun updateBps(newBps: Double) {
+  fun updateBps(newBps: Double, dropCheckerStatus: DropCheckerStatus? = null) {
     viewModelScope.launch {
       val curProj = repository.refreshProjection() ?: _uiState.value.projection ?: return@launch
       val safeBps = newBps.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: return@launch
       val eventTs = monotonicTimestamp(curProj)
-      val updatedProjection = repository.addEvent(
+      val dcNote = dropCheckerStatus?.let { " • Drop checker: ${it.label}" }.orEmpty()
+      repository.addEvent(
         eventType = LedgerEventType.BPS_CHANGE,
         bps = safeBps,
         solenoidStartMinutes = curProj.currentStartMinutes,
         solenoidEndMinutes = curProj.currentEndMinutes,
-        note = "Adjusted BPS from ${curProj.currentBps} to $safeBps",
-        timestampMillis = eventTs
+        note = "Adjusted BPS from ${curProj.currentBps} to $safeBps$dcNote",
+        timestampMillis = eventTs,
+        dropCheckerStatus = dropCheckerStatus
       )
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          showBpsDialog = false,
-          infoMessage = "Bubble rate updated to $safeBps BPS"
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      syncFullState(
+        infoMessage = "Bubble rate updated to $safeBps BPS",
+        closeDialogs = { it.copy(showBpsDialog = false) }
+      )
     }
   }
 
@@ -126,7 +137,7 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       val curProj = repository.refreshProjection() ?: _uiState.value.projection ?: return@launch
       val eventTs = monotonicTimestamp(curProj)
-      val updatedProjection = repository.addEvent(
+      repository.addEvent(
         eventType = LedgerEventType.SCHEDULE_CHANGE,
         bps = curProj.currentBps,
         solenoidStartMinutes = startMinutes,
@@ -134,16 +145,10 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
         note = "Schedule changed to ${formatMinutes(startMinutes)} - ${formatMinutes(endMinutes)}",
         timestampMillis = eventTs
       )
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          showScheduleDialog = false,
-          infoMessage = "Solenoid schedule updated"
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      syncFullState(
+        infoMessage = "Solenoid schedule updated",
+        closeDialogs = { it.copy(showScheduleDialog = false) }
+      )
     }
   }
 
@@ -152,7 +157,7 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
       val curProj = repository.refreshProjection() ?: _uiState.value.projection ?: return@launch
       val safeHours = hoursDelta.takeIf { it.isFinite() && it != 0.0 } ?: return@launch
       val eventTs = monotonicTimestamp(curProj)
-      val updatedProjection = repository.addEvent(
+      repository.addEvent(
         eventType = LedgerEventType.DOWNTIME_OVERRIDE,
         bps = curProj.currentBps,
         solenoidStartMinutes = curProj.currentStartMinutes,
@@ -161,16 +166,17 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
         note = if (note.isNotBlank()) note else "Runtime override: $safeHours hrs",
         timestampMillis = eventTs
       )
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          showDowntimeDialog = false,
-          infoMessage = "Logged $safeHours hrs override"
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      syncFullState(
+        infoMessage = "Logged $safeHours hrs override",
+        closeDialogs = { it.copy(showDowntimeDialog = false) }
+      )
+    }
+  }
+
+  fun toggleLivePause() {
+    viewModelScope.launch {
+      val (_, message) = repository.toggleLivePause()
+      syncFullState(infoMessage = message)
     }
   }
 
@@ -188,7 +194,6 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
         note = "Scale check-in: ${safeWeight.roundToInt()}g",
         timestampMillis = eventTs
       )
-      val events = repository.getEvents()
       val latestFeedback = updatedProjection?.latestCalibrationFeedback
       val feedbackMsg = when {
         updatedProjection?.possibleLeakDetected == true ->
@@ -198,76 +203,106 @@ class Co2ViewModel(application: Application) : AndroidViewModel(application) {
         else ->
           "Scale check-in logged (${safeWeight.roundToInt()}g)"
       }
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          showScaleCalibrationDialog = false,
-          infoMessage = feedbackMsg
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      syncFullState(
+        infoMessage = feedbackMsg,
+        closeDialogs = { it.copy(showScaleCalibrationDialog = false) }
+      )
     }
   }
 
-  /**
-   * Updates cylinder physics & alert settings in-place WITHOUT clearing ledger history
-   * or resetting the cylinder to 100% full.
-   */
   fun updateCylinderSettings(updatedConfig: CylinderConfig) {
     viewModelScope.launch {
       val existing = repository.getConfig()
       val preservedConfig = if (existing != null) {
         updatedConfig.copy(
           id = existing.id,
-          setupTimestampMillis = existing.setupTimestampMillis
+          setupTimestampMillis = existing.setupTimestampMillis,
+          bottleStatus = existing.bottleStatus,
+          isSelected = existing.isSelected,
+          pausedSinceMillis = existing.pausedSinceMillis,
+          carriedGramsPerBubble = existing.carriedGramsPerBubble
         )
       } else {
         updatedConfig
       }
-      val updatedProjection = repository.saveConfig(preservedConfig)
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          showSetupDialog = false,
-          infoMessage = "Cylinder settings updated (history preserved)"
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      repository.saveConfig(preservedConfig)
+      syncFullState(
+        infoMessage = "Cylinder settings updated (history preserved)",
+        closeDialogs = { it.copy(showSetupDialog = false) }
+      )
     }
   }
 
   fun resetOrSetupCylinder(config: CylinderConfig) {
     viewModelScope.launch {
-      Co2AlarmScheduler.clearDeliveryState(getApplication())
-      val updatedProjection = repository.resetCylinder(config)
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          showSetupDialog = false,
-          infoMessage = "Cylinder initialized with ${config.initialNetCo2Grams.roundToInt()}g net CO2"
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      val existing = repository.getConfig()
+      Co2AlarmScheduler.clearDeliveryState(getApplication(), existing?.id ?: config.id)
+      repository.resetCylinder(config, archivePrevious = true)
+      val carriedNote = if (config.carriedGramsPerBubble != null) " (calibration carried over)" else ""
+      syncFullState(
+        infoMessage = "Cylinder initialized with ${config.initialNetCo2Grams.roundToInt()}g net CO2$carriedNote",
+        closeDialogs = { it.copy(showSetupDialog = false) }
+      )
+    }
+  }
+
+  fun addNewCylinder(config: CylinderConfig, selectImmediately: Boolean = true) {
+    viewModelScope.launch {
+      repository.addNewCylinder(config, selectImmediately = selectImmediately)
+      syncFullState(
+        infoMessage = "Added '${config.cylinderName}' (${config.bottleStatus.label})",
+        closeDialogs = { it.copy(showSetupDialog = false, showBottleFleetSheet = false) }
+      )
+    }
+  }
+
+  fun selectCylinder(cylinderId: Long) {
+    viewModelScope.launch {
+      val selected = repository.selectCylinder(cylinderId)
+      syncFullState(
+        infoMessage = selected?.let { "Switched to ${it.config.cylinderName}" },
+        closeDialogs = { it.copy(showBottleFleetSheet = false) }
+      )
+    }
+  }
+
+  fun swapToSpareBottle(spareCylinderId: Long, carryCalibration: Boolean = true) {
+    viewModelScope.launch {
+      Co2AlarmScheduler.clearDeliveryState(getApplication(), spareCylinderId)
+      val swapped = repository.swapToSpareBottle(spareCylinderId, carryCalibrationFromCurrent = carryCalibration)
+      syncFullState(
+        infoMessage = swapped?.let { "Swapped in ${it.config.cylinderName} • previous bottle marked Needs Refill" },
+        closeDialogs = { it.copy(showBottleFleetSheet = false) }
+      )
+    }
+  }
+
+  fun markSpareRefilled(cylinderId: Long, newFullGrossGrams: Double? = null, refillCost: Double? = null) {
+    viewModelScope.launch {
+      repository.markBottleRefilledAsSpare(cylinderId, newFullGrossGrams, refillCost)
+      syncFullState(infoMessage = "Spare bottle marked full & ready")
+    }
+  }
+
+  fun deleteCylinder(cylinderId: Long) {
+    viewModelScope.launch {
+      Co2AlarmScheduler.clearDeliveryState(getApplication(), cylinderId)
+      repository.deleteCylinder(cylinderId)
+      syncFullState(infoMessage = "Bottle removed from fleet")
     }
   }
 
   fun deleteEvent(eventId: Long) {
     viewModelScope.launch {
-      val updatedProjection = repository.deleteEvent(eventId)
-      val events = repository.getEvents()
-      _uiState.update {
-        it.copy(
-          projection = updatedProjection,
-          events = sortEventsForHistory(events),
-          infoMessage = "Ledger event removed. Recalculated timeline."
-        )
-      }
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(getApplication(), updatedProjection)
+      repository.deleteEvent(eventId)
+      syncFullState(infoMessage = "Ledger event removed. Recalculated timeline.")
+    }
+  }
+
+  fun deleteArchiveEntry(entryId: Long) {
+    viewModelScope.launch {
+      repository.deleteArchiveEntry(entryId)
+      syncFullState(infoMessage = "Archived refill record removed")
     }
   }
 

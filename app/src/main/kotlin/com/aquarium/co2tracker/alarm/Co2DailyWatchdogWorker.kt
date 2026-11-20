@@ -6,9 +6,7 @@ import androidx.work.WorkerParameters
 import com.aquarium.co2tracker.data.Co2Repository
 
 /**
- * Redundant daily safety net watchdog for long-range alert reliability (months into future).
- * Recalculates depletion projection from SQLite ledger, catches up any missed alerts or daily
- * reminders via Co2AlertPolicy, and keeps the next exact AlarmManager alarm armed.
+ * Redundant daily safety net watchdog for long-range alert reliability across all active cylinders.
  */
 class Co2DailyWatchdogWorker(
   context: Context,
@@ -18,8 +16,8 @@ class Co2DailyWatchdogWorker(
   override suspend fun doWork(): Result {
     return try {
       val repository = Co2Repository(applicationContext)
-      val projection = repository.refreshProjection()
-      Co2AlarmScheduler.evaluateAndNotifyIfDue(applicationContext, projection)
+      val allProjections = repository.getAllProjections()
+      Co2AlarmScheduler.evaluateAndNotifyAllActive(applicationContext, allProjections)
       Result.success()
     } catch (_: Exception) {
       Result.retry()

@@ -14,7 +14,9 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.aquarium.co2tracker.MainActivity
 import com.aquarium.co2tracker.R
+import com.aquarium.co2tracker.domain.BottleStatus
 import com.aquarium.co2tracker.domain.CylinderProjection
+import com.aquarium.co2tracker.widget.Co2WidgetProvider
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -29,12 +31,9 @@ object Co2AlarmScheduler {
   const val NOTIFICATION_ID_REFILL = 4201
   const val NOTIFICATION_ID_TEST = 4202
   const val NOTIFICATION_ID_CHECK_IN = 4203
+  const val NOTIFICATION_ID_PAUSED = 4204
 
   private const val PREFS_NAME = "co2_alert_delivery_state"
-  private const val KEY_SETUP_TS = "setup_timestamp_millis"
-  private const val KEY_CHECK_IN_NOTIFIED = "check_in_notified"
-  private const val KEY_LAST_STAGE = "last_notified_stage"
-  private const val KEY_LAST_NOTIFIED_AT = "last_notified_at_millis"
 
   fun enqueueDailyWatchdogWork(context: Context) {
     val watchdogRequest = PeriodicWorkRequestBuilder<Co2DailyWatchdogWorker>(
@@ -78,119 +77,216 @@ object Co2AlarmScheduler {
     return NotificationManagerCompat.from(context).areNotificationsEnabled()
   }
 
-  private fun loadDeliveryState(context: Context): AlertDeliveryState {
+  private fun keyPrefix(cylinderId: Long): String = "c_${cylinderId}_"
+
+  private fun loadDeliveryState(context: Context, cylinderId: Long): AlertDeliveryState {
     val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    val stageName = prefs.getString(KEY_LAST_STAGE, null)
+    val p = keyPrefix(cylinderId)
+    val stageName = prefs.getString("${p}last_notified_stage", null)
     val stage = stageName?.let { runCatching { AlertStage.valueOf(it) }.getOrNull() }
     return AlertDeliveryState(
-      setupTimestampMillis = prefs.getLong(KEY_SETUP_TS, 0L),
-      checkInNotified = prefs.getBoolean(KEY_CHECK_IN_NOTIFIED, false),
+      setupTimestampMillis = prefs.getLong("${p}setup_timestamp_millis", 0L),
+      checkInNotified = prefs.getBoolean("${p}check_in_notified", false),
       lastNotifiedStage = stage,
-      lastNotifiedAtMillis = prefs.getLong(KEY_LAST_NOTIFIED_AT, 0L)
+      lastNotifiedAtMillis = prefs.getLong("${p}last_notified_at_millis", 0L),
+      pausedReminderForMillis = prefs.getLong("${p}paused_reminder_for_millis", 0L)
     )
   }
 
-  private fun saveDeliveryState(context: Context, state: AlertDeliveryState) {
+  private fun saveDeliveryState(context: Context, cylinderId: Long, state: AlertDeliveryState) {
     val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    val p = keyPrefix(cylinderId)
     prefs.edit()
-      .putLong(KEY_SETUP_TS, state.setupTimestampMillis)
-      .putBoolean(KEY_CHECK_IN_NOTIFIED, state.checkInNotified)
-      .putString(KEY_LAST_STAGE, state.lastNotifiedStage?.name)
-      .putLong(KEY_LAST_NOTIFIED_AT, state.lastNotifiedAtMillis)
+      .putLong("${p}setup_timestamp_millis", state.setupTimestampMillis)
+      .putBoolean("${p}check_in_notified", state.checkInNotified)
+      .putString("${p}last_notified_stage", state.lastNotifiedStage?.name)
+      .putLong("${p}last_notified_at_millis", state.lastNotifiedAtMillis)
+      .putLong("${p}paused_reminder_for_millis", state.pausedReminderForMillis)
       .apply()
   }
 
-  fun clearDeliveryState(context: Context) {
+  fun clearDeliveryState(context: Context, cylinderId: Long? = null) {
     val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    prefs.edit().clear().apply()
+    if (cylinderId == null) {
+      prefs.edit().clear().apply()
+    } else {
+      val p = keyPrefix(cylinderId)
+      prefs.edit()
+        .remove("${p}setup_timestamp_millis")
+        .remove("${p}check_in_notified")
+        .remove("${p}last_notified_stage")
+        .remove("${p}last_notified_at_millis")
+        .remove("${p}paused_reminder_for_millis")
+        .apply()
+    }
   }
 
   /**
-   * Evaluates whether any milestone notification is due right now (catching up missed alarms
-   * across reboots/Doze while preventing duplicate spam) and re-arms the next exact alarm.
+   * Evaluates ALL active cylinders for due notifications and arms the earliest upcoming exact alarm.
+   */
+  fun evaluateAndNotifyAllActive(
+    context: Context,
+    projections: List<CylinderProjection>,
+    nowMillis: Long = System.currentTimeMillis()
+  ) {
+    createNotificationChannel(context)
+    val active = projections.filter { it.config.bottleStatus == BottleStatus.ACTIVE }
+    if (active.isEmpty()) {
+      cancelAlarm(context)
+      Co2WidgetProvider.updateAllWidgets(context)
+      return
+    }
+
+    val multiActive = active.size > 1
+    val candidatePlans = mutableListOf<Pair<CylinderProjection, NextAlarmPlan>>()
+
+    for (projection in active) {
+      val cid = projection.config.id
+      val rawState = loadDeliveryState(context, cid)
+      val normalizedState = Co2AlertPolicy.normalizeStateForProjection(projection, rawState, nowMillis)
+      if (normalizedState != rawState) {
+        saveDeliveryState(context, cid, normalizedState)
+      }
+
+      val dueStage = Co2AlertPolicy.evaluateDueNotification(
+        projection = projection,
+        rawState = normalizedState,
+        nowMillis = nowMillis
+      )
+      val finalState = if (dueStage != null) {
+        showStageNotification(context, dueStage, projection, includeCylinderName = multiActive)
+        val updated = Co2AlertPolicy.recordNotificationDelivered(
+          projection = projection,
+          rawState = normalizedState,
+          stage = dueStage,
+          deliveredAtMillis = nowMillis
+        )
+        saveDeliveryState(context, cid, updated)
+        updated
+      } else {
+        normalizedState
+      }
+
+      val nextPlan = Co2AlertPolicy.computeNextAlarmPlan(projection, finalState, nowMillis)
+      if (nextPlan != null) {
+        candidatePlans.add(projection to nextPlan)
+      }
+    }
+
+    val earliest = candidatePlans.minByOrNull { it.second.triggerAtMillis }
+    if (earliest != null) {
+      enqueueDailyWatchdogWork(context)
+      scheduleAlarmIntent(context, earliest.first, earliest.second)
+    } else {
+      cancelPendingAlarmOnly(context)
+      if (active.none { it.hasActiveBurn || it.isPaused || it.isBelowDangerThreshold || it.isEmpty }) {
+        WorkManager.getInstance(context).cancelUniqueWork(Co2DailyWatchdogWorker.WORK_NAME)
+      }
+    }
+
+    Co2WidgetProvider.updateAllWidgets(context)
+  }
+
+  fun scheduleForAllActive(
+    context: Context,
+    projections: List<CylinderProjection>,
+    nowMillis: Long = System.currentTimeMillis()
+  ) {
+    createNotificationChannel(context)
+    val active = projections.filter { it.config.bottleStatus == BottleStatus.ACTIVE }
+    if (active.isEmpty()) {
+      cancelAlarm(context)
+      Co2WidgetProvider.updateAllWidgets(context)
+      return
+    }
+
+    val candidatePlans = mutableListOf<Pair<CylinderProjection, NextAlarmPlan>>()
+    for (projection in active) {
+      val cid = projection.config.id
+      val rawState = loadDeliveryState(context, cid)
+      val normalizedState = Co2AlertPolicy.normalizeStateForProjection(projection, rawState, nowMillis)
+      if (normalizedState != rawState) {
+        saveDeliveryState(context, cid, normalizedState)
+      }
+      val nextPlan = Co2AlertPolicy.computeNextAlarmPlan(projection, normalizedState, nowMillis)
+      if (nextPlan != null) {
+        candidatePlans.add(projection to nextPlan)
+      }
+    }
+
+    val earliest = candidatePlans.minByOrNull { it.second.triggerAtMillis }
+    if (earliest != null) {
+      enqueueDailyWatchdogWork(context)
+      scheduleAlarmIntent(context, earliest.first, earliest.second)
+    } else {
+      cancelPendingAlarmOnly(context)
+      if (active.none { it.hasActiveBurn || it.isPaused || it.isBelowDangerThreshold || it.isEmpty }) {
+        WorkManager.getInstance(context).cancelUniqueWork(Co2DailyWatchdogWorker.WORK_NAME)
+      }
+    }
+
+    Co2WidgetProvider.updateAllWidgets(context)
+  }
+
+  /**
+   * Backward-compatible single-cylinder entry points.
    */
   fun evaluateAndNotifyIfDue(
     context: Context,
     projection: CylinderProjection?,
     nowMillis: Long = System.currentTimeMillis()
   ): AlertStage? {
-    createNotificationChannel(context)
     if (projection == null) {
       cancelAlarm(context)
+      Co2WidgetProvider.updateAllWidgets(context)
       return null
     }
-
-    val rawState = loadDeliveryState(context)
+    createNotificationChannel(context)
+    val cid = projection.config.id
+    val rawState = loadDeliveryState(context, cid)
     val normalizedState = Co2AlertPolicy.normalizeStateForProjection(projection, rawState, nowMillis)
     if (normalizedState != rawState) {
-      saveDeliveryState(context, normalizedState)
+      saveDeliveryState(context, cid, normalizedState)
     }
-
-    val dueStage = Co2AlertPolicy.evaluateDueNotification(
-      projection = projection,
-      rawState = normalizedState,
-      nowMillis = nowMillis
-    )
-
+    val dueStage = Co2AlertPolicy.evaluateDueNotification(projection, normalizedState, nowMillis)
     val finalState = if (dueStage != null) {
       showStageNotification(context, dueStage, projection)
-      val updated = Co2AlertPolicy.recordNotificationDelivered(
-        projection = projection,
-        rawState = normalizedState,
-        stage = dueStage,
-        deliveredAtMillis = nowMillis
-      )
-      saveDeliveryState(context, updated)
+      val updated = Co2AlertPolicy.recordNotificationDelivered(projection, normalizedState, dueStage, nowMillis)
+      saveDeliveryState(context, cid, updated)
       updated
     } else {
       normalizedState
     }
-
-    armNextAlarm(context, projection, finalState, nowMillis)
+    val plan = Co2AlertPolicy.computeNextAlarmPlan(projection, finalState, nowMillis)
+    if (plan != null) {
+      enqueueDailyWatchdogWork(context)
+      scheduleAlarmIntent(context, projection, plan)
+    } else {
+      cancelPendingAlarmOnly(context)
+    }
+    Co2WidgetProvider.updateAllWidgets(context)
     return dueStage
   }
 
   fun scheduleExactDepletionAlarm(context: Context, projection: CylinderProjection?) {
-    createNotificationChannel(context)
-
     if (projection == null) {
       cancelAlarm(context)
+      Co2WidgetProvider.updateAllWidgets(context)
       return
     }
-
-    val now = System.currentTimeMillis()
-    val rawState = loadDeliveryState(context)
-    val normalizedState = Co2AlertPolicy.normalizeStateForProjection(projection, rawState, now)
-    if (normalizedState != rawState) {
-      saveDeliveryState(context, normalizedState)
-    }
-
-    armNextAlarm(context, projection, normalizedState, now)
+    scheduleForAllActive(context, listOf(projection))
   }
 
-  private fun armNextAlarm(
+  private fun scheduleAlarmIntent(
     context: Context,
     projection: CylinderProjection,
-    state: AlertDeliveryState,
-    nowMillis: Long
+    plan: NextAlarmPlan
   ) {
-    val plan = Co2AlertPolicy.computeNextAlarmPlan(projection, state, nowMillis)
-    if (plan == null) {
-      // Only cancel when burn is paused (0 BPS) and bottle is not low
-      cancelPendingAlarmOnly(context)
-      if (!projection.hasActiveBurn && !projection.isBelowDangerThreshold && !projection.isEmpty) {
-        WorkManager.getInstance(context).cancelUniqueWork(Co2DailyWatchdogWorker.WORK_NAME)
-      }
-      return
-    }
-
-    // Keep daily watchdog alive as long as a cylinder is actively tracked or low
-    enqueueDailyWatchdogWork(context)
-
     val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
     val intent = Intent(context, Co2AlarmReceiver::class.java).apply {
       action = ACTION_EXACT_ALARM
       putExtra("ALERT_STAGE", plan.stage.name)
+      putExtra("CYLINDER_ID", projection.config.id)
       putExtra("REMAINING_GRAMS", projection.remainingCo2Grams)
       putExtra("DEPLETION_MILLIS", projection.depletionTimestampMillis)
       putExtra("EMPTY_MILLIS", projection.emptyTimestampMillis)
@@ -208,38 +304,17 @@ object Co2AlarmScheduler {
 
     try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-        // Doze-safe inexact wakeup fallback when exact alarm permission is not granted
-        alarmManager.setAndAllowWhileIdle(
-          AlarmManager.RTC_WAKEUP,
-          plan.triggerAtMillis,
-          pendingIntent
-        )
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, plan.triggerAtMillis, pendingIntent)
       } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        alarmManager.setExactAndAllowWhileIdle(
-          AlarmManager.RTC_WAKEUP,
-          plan.triggerAtMillis,
-          pendingIntent
-        )
+        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, plan.triggerAtMillis, pendingIntent)
       } else {
-        alarmManager.setExact(
-          AlarmManager.RTC_WAKEUP,
-          plan.triggerAtMillis,
-          pendingIntent
-        )
+        alarmManager.setExact(AlarmManager.RTC_WAKEUP, plan.triggerAtMillis, pendingIntent)
       }
     } catch (_: SecurityException) {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        alarmManager.setAndAllowWhileIdle(
-          AlarmManager.RTC_WAKEUP,
-          plan.triggerAtMillis,
-          pendingIntent
-        )
+        alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, plan.triggerAtMillis, pendingIntent)
       } else {
-        alarmManager.set(
-          AlarmManager.RTC_WAKEUP,
-          plan.triggerAtMillis,
-          pendingIntent
-        )
+        alarmManager.set(AlarmManager.RTC_WAKEUP, plan.triggerAtMillis, pendingIntent)
       }
     }
   }
@@ -288,7 +363,7 @@ object Co2AlarmScheduler {
       .setContentText("Alarm system online. Status: $exactStatus")
       .setStyle(
         NotificationCompat.BigTextStyle().bigText(
-          "Test alert successfully delivered! Status: $exactStatus. Check-in, refill warning, safety cutoff, and empty alerts are armed with a daily watchdog backup."
+          "Test alert successfully delivered! Status: $exactStatus. Check-in, refill warning, safety cutoff, pause reminder, and empty alerts are armed with a daily watchdog backup."
         )
       )
       .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -303,7 +378,8 @@ object Co2AlarmScheduler {
   fun showStageNotification(
     context: Context,
     stage: AlertStage,
-    projection: CylinderProjection
+    projection: CylinderProjection,
+    includeCylinderName: Boolean = false
   ) {
     createNotificationChannel(context)
 
@@ -320,10 +396,18 @@ object Co2AlarmScheduler {
       stage = stage,
       projection = projection,
       cutoffDateStr = cutoffDateStr,
-      emptyDateStr = emptyDateStr
+      emptyDateStr = emptyDateStr,
+      includeCylinderName = includeCylinderName
     )
 
-    val notificationId = if (stage == AlertStage.CHECK_IN) NOTIFICATION_ID_CHECK_IN else NOTIFICATION_ID_REFILL
+    val cylinderOffset = ((projection.config.id - 1L).coerceAtLeast(0L) % 20L).toInt() * 10
+    val baseId = when (stage) {
+      AlertStage.CHECK_IN -> NOTIFICATION_ID_CHECK_IN
+      AlertStage.PAUSED_REMINDER -> NOTIFICATION_ID_PAUSED
+      else -> NOTIFICATION_ID_REFILL
+    }
+    val notificationId = baseId + cylinderOffset
+
     val intent = Intent(context, MainActivity::class.java).apply {
       flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
     }
@@ -351,9 +435,6 @@ object Co2AlarmScheduler {
     manager.notify(notificationId, builder.build())
   }
 
-  /**
-   * Backward-compatible fallback notification method used if database cannot be read during wakeup.
-   */
   fun showRefillNotification(
     context: Context,
     remainingGrams: Double,

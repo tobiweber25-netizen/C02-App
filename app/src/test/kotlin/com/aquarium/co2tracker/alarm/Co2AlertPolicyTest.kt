@@ -1,5 +1,6 @@
 package com.aquarium.co2tracker.alarm
 
+import com.aquarium.co2tracker.domain.BottleStatus
 import com.aquarium.co2tracker.domain.Co2PhysicsEngine
 import com.aquarium.co2tracker.domain.CylinderConfig
 import com.aquarium.co2tracker.domain.LedgerEvent
@@ -172,5 +173,64 @@ class Co2AlertPolicyTest {
     assertFalse("Title must not hardcode lead time 5 days when <2 days left: ${copy.title}", copy.title.contains("5"))
     assertTrue("Title should reflect ~2 days left: ${copy.title}", copy.title.contains("2 days"))
     assertTrue("Body should include empty date: ${copy.body}", copy.body.contains("Fri, 02 Oct 2026"))
+  }
+
+  @Test
+  fun testForgottenPauseReminderFiresOnceAfter18Hours() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val pausedAt = epochMillis(2026, 5, 2, 12, 0)
+    val pausedConfig = baseConfig(setupTime).copy(pausedSinceMillis = pausedAt)
+    var state = AlertDeliveryState(setupTimestampMillis = setupTime)
+
+    // 1 hour into pause: next alarm is PAUSED_REMINDER at +18h
+    val oneHourIn = pausedAt + 3_600_000L
+    val proj1h = Co2PhysicsEngine.evaluateLedger(pausedConfig, emptyList(), oneHourIn, fixedZone)
+    assertNull(Co2AlertPolicy.evaluateDueNotification(proj1h, state, oneHourIn))
+    val plan = Co2AlertPolicy.computeNextAlarmPlan(proj1h, state, oneHourIn)
+    assertNotNull(plan)
+    assertEquals(AlertStage.PAUSED_REMINDER, plan!!.stage)
+    assertEquals(pausedAt + Co2AlertPolicy.PAUSED_REMINDER_DELAY_MILLIS, plan.triggerAtMillis)
+
+    // At +18h: fires PAUSED_REMINDER once, then stays silent until resumed
+    val at18h = pausedAt + Co2AlertPolicy.PAUSED_REMINDER_DELAY_MILLIS
+    val proj18h = Co2PhysicsEngine.evaluateLedger(pausedConfig, emptyList(), at18h, fixedZone)
+    assertEquals(AlertStage.PAUSED_REMINDER, Co2AlertPolicy.evaluateDueNotification(proj18h, state, at18h))
+
+    state = Co2AlertPolicy.recordNotificationDelivered(proj18h, state, AlertStage.PAUSED_REMINDER, at18h)
+    assertNull(Co2AlertPolicy.evaluateDueNotification(proj18h, state, at18h + 3_600_000L))
+  }
+
+  @Test
+  fun testIdleSpareBottlesNeverTriggerAlarms() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val spareCfg = baseConfig(setupTime).copy(bottleStatus = BottleStatus.SPARE_FULL)
+    val spareProj = Co2PhysicsEngine.evaluateLedger(spareCfg, emptyList(), setupTime, fixedZone)
+    assertNull(Co2AlertPolicy.computeNextAlarmPlan(spareProj, AlertDeliveryState(setupTime), setupTime))
+    assertNull(Co2AlertPolicy.evaluateDueNotification(spareProj, AlertDeliveryState(setupTime), setupTime))
+
+    val needsRefillCfg = baseConfig(setupTime).copy(bottleStatus = BottleStatus.NEEDS_REFILL)
+    val emptyProj = Co2PhysicsEngine.evaluateLedger(needsRefillCfg, emptyList(), setupTime, fixedZone)
+    assertNull(Co2AlertPolicy.computeNextAlarmPlan(emptyProj, AlertDeliveryState(setupTime), setupTime))
+    assertNull(Co2AlertPolicy.evaluateDueNotification(emptyProj, AlertDeliveryState(setupTime), setupTime))
+  }
+
+  @Test
+  fun testMultiTankCopyIncludesCylinderNameAndShopNote() {
+    val setupTime = epochMillis(2026, 5, 1, 9, 0)
+    val config = baseConfig(setupTime).copy(
+      cylinderName = "Nano 45P",
+      refillShopName = "Joburg Gas Co"
+    )
+    val proj = Co2PhysicsEngine.evaluateLedger(config, emptyList(), setupTime, fixedZone)
+      .copy(alertShiftedForShopDays = true)
+    val copy = Co2AlertPolicy.buildNotificationCopy(
+      stage = AlertStage.REFILL_WARNING,
+      projection = proj,
+      cutoffDateStr = "Mon, 10 Aug 2026",
+      emptyDateStr = "Thu, 20 Aug 2026",
+      includeCylinderName = true
+    )
+    assertTrue("Multi-tank title should include bottle name", copy.title.startsWith("[Nano 45P] "))
+    assertTrue("Body should note shop day shift", copy.body.contains("Joburg Gas Co"))
   }
 }

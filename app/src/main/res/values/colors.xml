@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="widget_bg_top">#102021</color>
+    <color name="widget_bg_bottom">#081213</color>
+    <color name="widget_rim_border">#1C3837</color>
+    <color name="widget_well_bg">#060F10</color>
+    <color name="widget_emerald">#34E89E</color>
+    <color name="widget_cyan">#67DCE2</color>
+    <color name="widget_amber">#F5B74C</color>
+    <color name="widget_coral">#F26D6D</color>
+    <color name="widget_ink_primary">#F0FAF7</color>
+    <color name="widget_ink_secondary">#93B3AE</color>
+    <color name="widget_ink_on_emerald">#031F14</color>
+</resources>

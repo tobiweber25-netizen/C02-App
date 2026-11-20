@@ -10,7 +10,9 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlin.math.sqrt
 
 object Co2PhysicsEngine {
   // Standard bubble volume in water = 0.05 mL (5.0e-5 Liters)
@@ -56,6 +58,7 @@ object Co2PhysicsEngine {
   const val MILLIS_PER_DAY = 86_400_000.0
   const val MAX_PROJECTION_DAYS = 3650.0
   private const val MAX_CALENDAR_ITERATION_DAYS = 4000L
+  private const val MAX_TAP_GAP_MILLIS = 10_000L
 
   private data class WeightAnchor(
     val timestampMillis: Long,
@@ -70,6 +73,76 @@ object Co2PhysicsEngine {
   fun parseDecimalInput(raw: String): Double? {
     val normalized = raw.trim().replace(',', '.')
     return normalized.toDoubleOrNull()?.takeIf { it.isFinite() }
+  }
+
+  /**
+   * Computes bubbles per second from a sequence of user tap timestamps (Tap-to-Measure).
+   * Automatically ignores stale taps older than 10 seconds before the latest burst and reports
+   * rhythm steadiness once at least 4 consistent taps have been recorded.
+   */
+  fun calculateBpsFromTapTimestamps(tapTimestampsMillis: List<Long>): TapBpsResult? {
+    if (tapTimestampsMillis.size < 2) return null
+    val sorted = tapTimestampsMillis.sorted()
+
+    // Keep only the latest continuous tapping session (gaps <= 10s)
+    val session = mutableListOf(sorted.last())
+    for (i in sorted.size - 2 downTo 0) {
+      if (session.first() - sorted[i] <= MAX_TAP_GAP_MILLIS) {
+        session.add(0, sorted[i])
+      } else {
+        break
+      }
+    }
+    if (session.size < 2) return null
+
+    val recent = session.takeLast(12)
+    val intervals = (1 until recent.size).map { (recent[it] - recent[it - 1]).toDouble() }
+      .filter { it >= 50.0 } // ignore accidental hardware double-bounce < 50ms
+    if (intervals.isEmpty()) return null
+
+    val mean = intervals.average()
+    if (!mean.isFinite() || mean <= 0.0) return null
+
+    val rawBps = (1000.0 / mean).coerceIn(0.1, 20.0)
+    val roundedBps = (rawBps * 10.0).roundToInt() / 10.0
+
+    val isSteady = if (intervals.size >= 3) {
+      val variance = intervals.map { (it - mean) * (it - mean) }.average()
+      val cv = sqrt(variance) / mean
+      cv <= 0.25
+    } else {
+      false
+    }
+
+    return TapBpsResult(
+      bps = roundedBps,
+      tapCount = recent.size,
+      isSteady = isSteady
+    )
+  }
+
+  /**
+   * Compares current calibrated burn rate against archived cycles to flag gradual seal wear
+   * or slow fitting leaks (>25% higher gas loss per bubble than historical average).
+   */
+  fun detectHistoricalSealDriftPercent(
+    currentProjection: CylinderProjection,
+    archive: List<RefillArchiveEntry>
+  ): Int? {
+    if (!currentProjection.isScaleCalibrated || currentProjection.isUsingCarriedCalibration) return null
+    val pastCoeffs = archive.mapNotNull { it.calibratedGramsPerBubble }
+      .filter { it in MIN_CALIBRATED_GRAMS_PER_BUBBLE..MAX_CALIBRATED_GRAMS_PER_BUBBLE }
+    if (pastCoeffs.isEmpty()) return null
+
+    val historicalMean = pastCoeffs.average()
+    if (historicalMean <= 0.0) return null
+
+    val increaseRatio = (currentProjection.activeGramsPerBubble - historicalMean) / historicalMean
+    return if (increaseRatio >= 0.25) {
+      (increaseRatio * 100.0).roundToInt()
+    } else {
+      null
+    }
   }
 
   /**
@@ -211,14 +284,50 @@ object Co2PhysicsEngine {
   }
 
   /**
+   * Aligns an advance refill warning timestamp to the nearest open refill shop day on or before
+   * [candidateMillis], so alerts never land right before a closed Sunday/weekend.
+   */
+  fun alignTimestampToOpenShopDays(
+    candidateMillis: Long,
+    shopDaysMask: Int,
+    minAllowedMillis: Long,
+    zoneId: ZoneId = ZoneId.systemDefault()
+  ): Pair<Long, Boolean> {
+    val cleanMask = shopDaysMask and CylinderConfig.ALL_DAYS_MASK
+    if (cleanMask == 0 || cleanMask == CylinderConfig.ALL_DAYS_MASK) {
+      return candidateMillis to false
+    }
+
+    val candidateZdt = Instant.ofEpochMilli(candidateMillis).atZone(zoneId)
+    val initialDayBit = 1 shl (candidateZdt.dayOfWeek.value - 1)
+    if ((cleanMask and initialDayBit) != 0) {
+      return candidateMillis to false
+    }
+
+    // Step backward up to 6 days to find the last open refill shop day before the cutoff
+    for (daysBack in 1..6) {
+      val priorDate = candidateZdt.toLocalDate().minusDays(daysBack.toLong())
+      val bit = 1 shl (priorDate.dayOfWeek.value - 1)
+      if ((cleanMask and bit) != 0) {
+        val alignedMillis = priorDate
+          .atTime(candidateZdt.hour.coerceIn(8, 19), candidateZdt.minute)
+          .atZone(zoneId)
+          .toInstant()
+          .toEpochMilli()
+        return if (alignedMillis >= minAllowedMillis) {
+          alignedMillis to true
+        } else {
+          candidateMillis to false
+        }
+      }
+    }
+
+    return candidateMillis to false
+  }
+
+  /**
    * Calculates theoretical CO2 mass (grams) per bubble using the Ideal Gas Law:
    * m = (P_abs * V * M) / (R * T)
-   *
-   * Because the bubble counter sits downstream of the needle valve and upstream of the diffuser,
-   * P_abs = atmosphericPressureBar + workingPressureBar * backpressureRatio.
-   * - backpressureRatio = 0.0 -> atmospheric / zero-backpressure reactor (~0.000091g at sea level)
-   * - backpressureRatio = 0.65 -> typical ceramic diffuser backpressure (~0.00022g at 2.5 Bar + 0.83 Bar)
-   * - backpressureRatio = 1.0 -> full working pressure upper bound (~0.00030g at 2.5 Bar + 0.83 Bar)
    */
   fun calculateTheoreticalGramsPerBubble(
     workingPressureBar: Double,
@@ -309,11 +418,59 @@ object Co2PhysicsEngine {
   }
 
   /**
+   * Live "What-If" preview showing how a proposed BPS or solenoid schedule change shifts
+   * the cylinder's safety cutoff and completely-empty dates before saving.
+   */
+  fun previewWhatIfChange(
+    projection: CylinderProjection,
+    newBps: Double = projection.currentBps,
+    newStartMinutes: Int = projection.currentStartMinutes,
+    newEndMinutes: Int = projection.currentEndMinutes,
+    nowMillis: Long = projection.evaluatedAtMillis,
+    zoneId: ZoneId = ZoneId.systemDefault()
+  ): WhatIfPreview {
+    val safeBps = newBps.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: projection.currentBps
+    val activeHoursPerDay = calculateActiveSolenoidHoursPerDay(newStartMinutes, newEndMinutes)
+    val newHourlyBurn = calculateHourlyBurnRateGrams(safeBps, projection.activeGramsPerBubble)
+    val newDailyBurn = calculateDailyBurnRateGrams(safeBps, projection.activeGramsPerBubble, activeHoursPerDay)
+
+    val newCutoffMillis = when {
+      projection.isBelowDangerThreshold || projection.usableRemainingGrams <= 0.0 -> nowMillis
+      newHourlyBurn <= 1e-6 -> nowMillis + (MAX_PROJECTION_DAYS * MILLIS_PER_DAY).roundToLong()
+      else -> projectTimestampAfterActiveHours(
+        fromMillis = nowMillis,
+        requiredActiveHours = projection.usableRemainingGrams / newHourlyBurn,
+        startMinutes = newStartMinutes,
+        endMinutes = newEndMinutes,
+        zoneId = zoneId
+      )
+    }
+
+    val newEmptyMillis = when {
+      projection.isEmpty || projection.remainingCo2Grams <= 0.5 -> nowMillis
+      newHourlyBurn <= 1e-6 -> nowMillis + (MAX_PROJECTION_DAYS * MILLIS_PER_DAY).roundToLong()
+      else -> projectTimestampAfterActiveHours(
+        fromMillis = nowMillis,
+        requiredActiveHours = projection.remainingCo2Grams / newHourlyBurn,
+        startMinutes = newStartMinutes,
+        endMinutes = newEndMinutes,
+        zoneId = zoneId
+      )
+    }
+
+    return WhatIfPreview(
+      newDailyBurnGrams = newDailyBurn,
+      currentCutoffMillis = projection.depletionTimestampMillis,
+      newCutoffMillis = newCutoffMillis,
+      cutoffDeltaDays = (newCutoffMillis - projection.depletionTimestampMillis) / MILLIS_PER_DAY,
+      currentEmptyMillis = projection.emptyTimestampMillis,
+      newEmptyMillis = newEmptyMillis,
+      emptyDeltaDays = (newEmptyMillis - projection.emptyTimestampMillis) / MILLIS_PER_DAY
+    )
+  }
+
+  /**
    * Evaluates the immutable Event Ledger chronologically from cylinder setup to [nowMillis].
-   * Every event closes the previous time segment using exact solenoid schedule integration,
-   * handles cumulative downtime/runtime overrides cleanly, applies noise-guarded Two-Point /
-   * Multi-Point scale calibration, detects abnormal gas loss (possible leaks), and projects
-   * safety cutoff, empty (0g), conservative cutoff, check-in, and alert timestamps.
    */
   fun evaluateLedger(
     config: CylinderConfig,
@@ -336,6 +493,9 @@ object Co2PhysicsEngine {
       fluidType = config.fluidType,
       backpressureRatio = CONSERVATIVE_FULL_PRESSURE_RATIO
     )
+
+    val validCarriedCoeff = config.carriedGramsPerBubble
+      ?.takeIf { it.isFinite() && it in MIN_CALIBRATED_GRAMS_PER_BUBBLE..MAX_CALIBRATED_GRAMS_PER_BUBBLE }
 
     val initialWithSetup = if (sortedEvents.isEmpty() || sortedEvents.first().eventType != LedgerEventType.SETUP) {
       listOf(
@@ -360,8 +520,9 @@ object Co2PhysicsEngine {
     }
 
     val setupEvent = initialEvents.first()
-    var activeCoeff = theoreticalCoeff
-    var isCalibrated = false
+    var activeCoeff = validCarriedCoeff ?: theoreticalCoeff
+    var isCalibrated = validCarriedCoeff != null
+    var isUsingCarriedCalibration = validCarriedCoeff != null
     var activeBps = setupEvent.bps.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
     var activeStartMin = setupEvent.solenoidStartMinutes
     var activeEndMin = setupEvent.solenoidEndMinutes
@@ -443,8 +604,9 @@ object Co2PhysicsEngine {
           maxAllowableRemainingGrams = config.initialNetCo2Grams
           cumulativeBubbles = 0.0
           cumulativeActiveHours = 0.0
-          activeCoeff = theoreticalCoeff
-          isCalibrated = false
+          activeCoeff = validCarriedCoeff ?: theoreticalCoeff
+          isCalibrated = validCarriedCoeff != null
+          isUsingCarriedCalibration = validCarriedCoeff != null
           latestCalibrationFeedback = null
           weightAnchors.clear()
           weightAnchors.add(
@@ -478,10 +640,8 @@ object Co2PhysicsEngine {
             maxAllowableRemainingGrams = measuredNetRemaining
 
             if (measuredNetRemaining <= 0.0) {
-              // Never calibrate burn rate from an empty reading because exact dry-out time is unknown
               segmentFeedback = "Bottle recorded empty (0g remaining); burn rate kept unchanged"
             } else {
-              // Select the most recent weight anchor with sufficient gas drop & active runtime
               var selectedAnchor: WeightAnchor? = null
               for (i in weightAnchors.indices.reversed()) {
                 val anchor = weightAnchors[i]
@@ -507,6 +667,7 @@ object Co2PhysicsEngine {
                 if (computedCoeff.isFinite() && computedCoeff > 0.0) {
                   activeCoeff = computedCoeff.coerceIn(MIN_CALIBRATED_GRAMS_PER_BUBBLE, MAX_CALIBRATED_GRAMS_PER_BUBBLE)
                   isCalibrated = true
+                  isUsingCarriedCalibration = false
                   didRecalibrate = true
                   segmentFeedback = "Burn rate locked at ${String.format(Locale.US, "%.5f", activeCoeff)} g/bubble"
                 }
@@ -550,25 +711,50 @@ object Co2PhysicsEngine {
       )
     }
 
-    // 3. Project from latest banked ledger event forward to [nowMillis] using real solenoid schedule
+    // 3. Project from latest banked ledger event forward to [nowMillis]
+    // If live-paused (or bottle is sitting as SPARE_FULL / NEEDS_REFILL), freeze consumption after pause start!
     val lastSegment = evaluatedSegments.last()
     val currentActiveHoursPerDay = calculateActiveSolenoidHoursPerDay(activeStartMin, activeEndMin)
     val hourlyBurnRate = calculateHourlyBurnRateGrams(activeBps, activeCoeff)
     val dailyBurnRate = calculateDailyBurnRateGrams(activeBps, activeCoeff, currentActiveHoursPerDay)
-    val hasActiveBurn = hourlyBurnRate > 1e-6 && currentActiveHoursPerDay > 0.0
+
+    val effectivePausedSince = config.pausedSinceMillis?.takeIf { it <= nowMillis }
+    val isLivePaused = effectivePausedSince != null
+    val isBottleIdleStatus = config.bottleStatus != BottleStatus.ACTIVE
+
+    val liveBurnEndMillis = when {
+      isBottleIdleStatus -> lastSegment.event.timestampMillis
+      effectivePausedSince != null -> min(nowMillis, effectivePausedSince)
+      else -> nowMillis
+    }
 
     val liveActiveHours = calculateActiveSolenoidHoursBetween(
       startMillis = lastSegment.event.timestampMillis,
-      endMillis = nowMillis,
+      endMillis = liveBurnEndMillis,
       startMinutes = activeStartMin,
       endMinutes = activeEndMin,
       zoneId = zoneId
     )
+    val pausedMissedSolenoidHours = if (effectivePausedSince != null && !isBottleIdleStatus) {
+      calculateActiveSolenoidHoursBetween(
+        startMillis = max(effectivePausedSince, lastSegment.event.timestampMillis),
+        endMillis = nowMillis,
+        startMinutes = activeStartMin,
+        endMinutes = activeEndMin,
+        zoneId = zoneId
+      )
+    } else {
+      0.0
+    }
+
     val liveBubbles = (liveActiveHours * SECONDS_PER_HOUR * activeBps).coerceAtLeast(0.0)
     val liveConsumedGrams = (liveBubbles * activeCoeff).coerceAtLeast(0.0)
 
-    val currentRemainingGrams = (lastSegment.remainingCo2GramsAfter - liveConsumedGrams)
-      .coerceIn(0.0, config.initialNetCo2Grams)
+    val currentRemainingGrams = if (config.bottleStatus == BottleStatus.NEEDS_REFILL) {
+      0.0
+    } else {
+      (lastSegment.remainingCo2GramsAfter - liveConsumedGrams).coerceIn(0.0, config.initialNetCo2Grams)
+    }
     val totalConsumedGrams = (config.initialNetCo2Grams - currentRemainingGrams)
       .coerceIn(0.0, config.initialNetCo2Grams)
     val bankedConsumedGrams = (config.initialNetCo2Grams - lastSegment.remainingCo2GramsAfter)
@@ -582,6 +768,7 @@ object Co2PhysicsEngine {
 
     val usableRemainingGrams = (currentRemainingGrams - config.dangerThresholdGrams).coerceAtLeast(0.0)
     val isBelowDanger = currentRemainingGrams <= config.dangerThresholdGrams + 0.01
+    val hasActiveBurn = !isBottleIdleStatus && !isLivePaused && hourlyBurnRate > 1e-6 && currentActiveHoursPerDay > 0.0
 
     // 4. Exact projection to Safety Cutoff (dangerThresholdGrams)
     val depletionTimestampMillis: Long
@@ -627,9 +814,7 @@ object Co2PhysicsEngine {
         .coerceIn(0.0, MAX_PROJECTION_DAYS)
     }
 
-    // 6. Conservative (earliest) safety cutoff when uncalibrated (assumes full working pressure inside counter).
-    // IMPORTANT: To avoid time-drift (Zeno effect), integrate conservative burn from the latest
-    // physical weight anchor (setup or last scale reading) using full-pressure mass per bubble.
+    // 6. Conservative (earliest) safety cutoff when uncalibrated
     val conservativeDepletionTimestampMillis: Long
     val conservativeDaysUntilDanger: Double
     if (isCalibrated || isBelowDanger || !hasActiveBurn) {
@@ -667,16 +852,25 @@ object Co2PhysicsEngine {
       }
     }
 
-    // 7. Advance Refill Alert timestamp:
-    // Use conservative cutoff when uncalibrated so the user is warned before the earliest possible dry-out.
+    // 7. Advance Refill Alert timestamp (aligned to waking hours & open refill shop days!)
     val safeLeadDays = config.safeLeadTimeDays
     val leadTimeMillis = safeLeadDays * MILLIS_PER_DAY.toLong()
     val effectiveCutoffForAlert = if (isCalibrated) depletionTimestampMillis else conservativeDepletionTimestampMillis
     val rawAlertMillis = (effectiveCutoffForAlert - leadTimeMillis).coerceAtLeast(config.setupTimestampMillis)
-    val alertTimestampMillis = if (safeLeadDays > 0 && rawAlertMillis > nowMillis && hasActiveBurn) {
+    val wakingAlertMillis = if (safeLeadDays > 0 && rawAlertMillis > nowMillis && hasActiveBurn) {
       adjustAdvanceAlertToWakingHour(rawAlertMillis, effectiveCutoffForAlert, nowMillis, zoneId)
     } else {
       rawAlertMillis
+    }
+    val (alertTimestampMillis, alertShiftedForShopDays) = if (hasActiveBurn && !isBelowDanger && wakingAlertMillis > config.setupTimestampMillis) {
+      alignTimestampToOpenShopDays(
+        candidateMillis = wakingAlertMillis,
+        shopDaysMask = config.refillShopDaysMask,
+        minAllowedMillis = config.setupTimestampMillis,
+        zoneId = zoneId
+      )
+    } else {
+      wakingAlertMillis to false
     }
 
     val daysUntilRefillWindow = if (!hasActiveBurn && !isBelowDanger) {
@@ -685,7 +879,7 @@ object Co2PhysicsEngine {
       (alertTimestampMillis - nowMillis) / MILLIS_PER_DAY
     }
 
-    // 8. Recommended First Scale Check-In (when uncalibrated)
+    // 8. Recommended First Scale Check-In (only when completely uncalibrated)
     val recommendedCheckInTimestampMillis: Long? = if (!isCalibrated && hasActiveBurn && !isBelowDanger && currentRemainingGrams > 0.0) {
       val targetLossGrams = min(80.0, max(25.0, dailyBurnRate * 10.0))
         .coerceAtMost(config.initialNetCo2Grams * 0.15)
@@ -751,7 +945,12 @@ object Co2PhysicsEngine {
       conservativeDepletionTimestampMillis = conservativeDepletionTimestampMillis,
       recommendedCheckInTimestampMillis = recommendedCheckInTimestampMillis,
       possibleLeakDetected = possibleLeakDetected,
-      latestCalibrationFeedback = latestCalibrationFeedback
+      latestCalibrationFeedback = latestCalibrationFeedback,
+      isPaused = isLivePaused,
+      pausedSinceMillis = effectivePausedSince,
+      pausedMissedSolenoidHours = pausedMissedSolenoidHours,
+      isUsingCarriedCalibration = isUsingCarriedCalibration,
+      alertShiftedForShopDays = alertShiftedForShopDays
     )
   }
 

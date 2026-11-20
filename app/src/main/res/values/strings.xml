@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">CO2 Cylinder Tracker</string>
+    <string name="widget_description">Live aquarium CO2 reserve, refill countdown, and 1-tap pause toggle</string>
 </resources>

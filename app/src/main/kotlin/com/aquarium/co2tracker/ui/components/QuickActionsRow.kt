@@ -10,7 +10,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import com.aquarium.co2tracker.ui.theme.*
+import java.util.Locale
 
 @Composable
 fun QuickActionsRow(
@@ -19,7 +21,11 @@ fun QuickActionsRow(
   onDowntimeClick: () -> Unit,
   onScaleClick: () -> Unit,
   onRefillResetClick: () -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  isPaused: Boolean = false,
+  pausedMissedHours: Double = 0.0,
+  canTogglePause: Boolean = true,
+  onToggleLivePause: (() -> Unit)? = null
 ) {
   Column(
     modifier = modifier.fillMaxWidth(),
@@ -29,6 +35,73 @@ fun QuickActionsRow(
       title = "Regulator Controls",
       trailingLabel = "IMMUTABLE LEDGER"
     )
+
+    // One-Tap Live Pause / Resume Bar for Maintenance & Outages
+    if (onToggleLivePause != null && canTogglePause) {
+      val pauseAccent = if (isPaused) PearlEmerald else DropCheckerAmber
+      RimlessGlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = Radius.md,
+        elevated = isPaused,
+        accentRim = pauseAccent,
+        onClick = onToggleLivePause,
+        contentPadding = PaddingValues(horizontal = Spacing.normal, vertical = Spacing.md)
+      ) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+            modifier = Modifier.weight(1f)
+          ) {
+            Box(
+              modifier = Modifier
+                .size(IconSize.badge)
+                .clip(RoundedCornerShape(Radius.sm))
+                .background(pauseAccent.copy(alpha = AlphaTokens.subtleTint))
+                .border(
+                  StrokeTokens.hairline,
+                  pauseAccent.copy(alpha = AlphaTokens.rimSoft),
+                  RoundedCornerShape(Radius.sm)
+                ),
+              contentAlignment = Alignment.Center
+            ) {
+              AquaIcon(
+                type = AquaIconType.DOWNTIME_PAUSE,
+                tint = pauseAccent,
+                size = IconSize.md
+              )
+            }
+            Column {
+              Text(
+                text = if (isPaused) "CO2 Paused — Tap to Resume" else "Pause CO2 Now",
+                style = AquaTextStyles.bodySm,
+                fontWeight = FontWeight.SemiBold,
+                color = InkPrimary
+              )
+              Text(
+                text = if (isPaused) {
+                  String.format(Locale.US, "%.2f active hrs missed so far • auto-logs on resume", pausedMissedHours)
+                } else {
+                  "1-tap timer for power cuts or water changes"
+                },
+                style = AquaTextStyles.caption,
+                color = if (isPaused) PearlEmerald else InkSecondary
+              )
+            }
+          }
+
+          AquaStatusPill(
+            label = if (isPaused) "RESUME" else "PAUSE",
+            accentColor = pauseAccent,
+            showPulseDot = isPaused
+          )
+        }
+      }
+    }
 
     // 2x2 Precision Aquascaping Control Deck
     Row(

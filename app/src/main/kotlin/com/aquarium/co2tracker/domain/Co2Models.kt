@@ -30,6 +30,18 @@ enum class LedgerEventType(val displayTitle: String) {
   SCALE_CALIBRATION("Scale Weight Check-In")
 }
 
+enum class BottleStatus(val label: String) {
+  ACTIVE("Active on Tank"),
+  SPARE_FULL("Full Spare Ready"),
+  NEEDS_REFILL("Needs Refill")
+}
+
+enum class DropCheckerStatus(val label: String, val shortLabel: String) {
+  LOW_BLUE("Low CO2 (Blue)", "BLUE"),
+  OPTIMAL_GREEN("Optimal ~30ppm (Green)", "GREEN"),
+  HIGH_YELLOW("High CO2 (Yellow)", "YELLOW")
+}
+
 data class CylinderConfig(
   val id: Long = 1L,
   val cylinderName: String = "Primary CO2 Cylinder",
@@ -47,7 +59,14 @@ data class CylinderConfig(
   val startingBps: Double = 1.5,
   val dangerThresholdPercent: Double = 10.0,
   val notificationLeadTimeDays: Int = 5,
-  val setupTimestampMillis: Long = System.currentTimeMillis()
+  val setupTimestampMillis: Long = System.currentTimeMillis(),
+  val bottleStatus: BottleStatus = BottleStatus.ACTIVE,
+  val isSelected: Boolean = true,
+  val pausedSinceMillis: Long? = null,
+  val carriedGramsPerBubble: Double? = null,
+  val refillShopDaysMask: Int = ALL_DAYS_MASK,
+  val refillShopName: String = "",
+  val lastRefillCost: Double? = null
 ) {
   val isConfigured: Boolean
     get() = tareWeightGrams > 0.0 && fullGrossWeightGrams > effectiveTareWeightGrams
@@ -69,6 +88,16 @@ data class CylinderConfig(
 
   val dangerThresholdGrams: Double
     get() = initialNetCo2Grams * (dangerThresholdPercent.coerceIn(0.0, 95.0) / 100.0)
+
+  val isPaused: Boolean
+    get() = pausedSinceMillis != null
+
+  companion object {
+    // 7-bit mask: bit 0 = Mon ... bit 6 = Sun
+    const val ALL_DAYS_MASK = 0b1111111 // 127
+    const val WEEKDAYS_MASK = 0b0011111 // 31 (Mon–Fri)
+    const val MON_TO_SAT_MASK = 0b0111111 // 63 (Mon–Sat)
+  }
 }
 
 data class LedgerEvent(
@@ -81,8 +110,32 @@ data class LedgerEvent(
   val solenoidEndMinutes: Int,
   val downtimeHoursDelta: Double = 0.0,
   val scaleWeightGrams: Double? = null,
-  val note: String = ""
+  val note: String = "",
+  val dropCheckerStatus: DropCheckerStatus? = null
 )
+
+data class RefillArchiveEntry(
+  val id: Long = 0L,
+  val cylinderId: Long = 1L,
+  val cylinderName: String,
+  val startedAtMillis: Long,
+  val endedAtMillis: Long,
+  val initialNetGrams: Double,
+  val consumedGrams: Double,
+  val durationDays: Double,
+  val avgDailyBurnGrams: Double,
+  val calibratedGramsPerBubble: Double? = null,
+  val wasCalibrated: Boolean = false,
+  val refillCost: Double? = null,
+  val note: String = ""
+) {
+  val costPerMonth: Double?
+    get() = if (refillCost != null && refillCost > 0.0 && durationDays >= 1.0) {
+      refillCost / (durationDays / 30.4375)
+    } else {
+      null
+    }
+}
 
 data class EvaluatedLedgerSegment(
   val event: LedgerEvent,
@@ -128,7 +181,12 @@ data class CylinderProjection(
   val conservativeDepletionTimestampMillis: Long = depletionTimestampMillis,
   val recommendedCheckInTimestampMillis: Long? = null,
   val possibleLeakDetected: Boolean = false,
-  val latestCalibrationFeedback: String? = null
+  val latestCalibrationFeedback: String? = null,
+  val isPaused: Boolean = config.pausedSinceMillis != null,
+  val pausedSinceMillis: Long? = config.pausedSinceMillis,
+  val pausedMissedSolenoidHours: Double = 0.0,
+  val isUsingCarriedCalibration: Boolean = false,
+  val alertShiftedForShopDays: Boolean = false
 ) {
   val isBelowDangerThreshold: Boolean
     get() = remainingCo2Grams <= config.dangerThresholdGrams + 0.01
@@ -149,4 +207,20 @@ data class ScaleCheckInPreview(
   val possibleLeakDetected: Boolean,
   val projectedDepletionMillis: Long,
   val projectedEmptyMillis: Long
+)
+
+data class WhatIfPreview(
+  val newDailyBurnGrams: Double,
+  val currentCutoffMillis: Long,
+  val newCutoffMillis: Long,
+  val cutoffDeltaDays: Double,
+  val currentEmptyMillis: Long,
+  val newEmptyMillis: Long,
+  val emptyDeltaDays: Double
+)
+
+data class TapBpsResult(
+  val bps: Double,
+  val tapCount: Int,
+  val isSteady: Boolean
 )

@@ -17,10 +17,9 @@ class Co2AlarmReceiver : BroadcastReceiver() {
     scope.launch {
       try {
         val repository = Co2Repository(context)
-        val projection = repository.refreshProjection()
-        Co2AlarmScheduler.evaluateAndNotifyIfDue(context, projection)
+        val allProjections = repository.getAllProjections()
+        Co2AlarmScheduler.evaluateAndNotifyAllActive(context, allProjections)
       } catch (_: Exception) {
-        // Fallback to intent extras only if database could not be read
         if (intent != null && intent.hasExtra("DEPLETION_MILLIS")) {
           val remainingGrams = intent.getDoubleExtra("REMAINING_GRAMS", 0.0).coerceAtLeast(0.0)
           val depletionMillis = intent.getLongExtra("DEPLETION_MILLIS", System.currentTimeMillis())
