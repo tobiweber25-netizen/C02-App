@@ -7,8 +7,8 @@ import com.aquarium.co2tracker.data.Co2Repository
 
 /**
  * Redundant daily safety net watchdog for long-range alert reliability (months into future).
- * Recalculates depletion projection from SQLite ledger, re-arms exact AlarmManager alarms,
- * and triggers refill notifications directly if the alert threshold has arrived.
+ * Recalculates depletion projection from SQLite ledger, catches up any missed alerts or daily
+ * reminders via Co2AlertPolicy, and keeps the next exact AlarmManager alarm armed.
  */
 class Co2DailyWatchdogWorker(
   context: Context,
@@ -19,26 +19,7 @@ class Co2DailyWatchdogWorker(
     return try {
       val repository = Co2Repository(applicationContext)
       val projection = repository.refreshProjection()
-      if (projection == null) {
-        Co2AlarmScheduler.cancelAlarm(applicationContext)
-        return Result.success()
-      }
-
-      // 1. Re-arm AlarmManager exact alarm
-      Co2AlarmScheduler.scheduleExactDepletionAlarm(applicationContext, projection)
-
-      // 2. Direct safety net check
-      val now = System.currentTimeMillis()
-      if (projection.alertTimestampMillis <= now || projection.isInRefillWindow || projection.isBelowDangerThreshold) {
-        Co2AlarmScheduler.showRefillNotification(
-          context = applicationContext,
-          remainingGrams = projection.remainingCo2Grams,
-          depletionMillis = projection.depletionTimestampMillis,
-          leadTimeDays = projection.config.notificationLeadTimeDays,
-          isUrgentEmpty = projection.isBelowDangerThreshold
-        )
-      }
-
+      Co2AlarmScheduler.evaluateAndNotifyIfDue(applicationContext, projection)
       Result.success()
     } catch (_: Exception) {
       Result.retry()

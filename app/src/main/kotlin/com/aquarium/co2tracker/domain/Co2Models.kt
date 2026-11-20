@@ -53,16 +53,19 @@ data class CylinderConfig(
     get() = tareWeightGrams > 0.0 && fullGrossWeightGrams > effectiveTareWeightGrams
 
   val effectiveTareWeightGrams: Double
-    get() = tareWeightGrams + if (includeRegulatorWeight) regulatorWeightGrams else 0.0
+    get() = tareWeightGrams.coerceAtLeast(0.0) + if (includeRegulatorWeight) regulatorWeightGrams.coerceAtLeast(0.0) else 0.0
 
   val initialNetCo2Grams: Double
     get() = (fullGrossWeightGrams - effectiveTareWeightGrams).coerceAtLeast(0.0)
 
   val workingPressureBar: Double
-    get() = workingPressureUnit.toBar(workingPressureValue).coerceAtLeast(0.1)
+    get() = workingPressureUnit.toBar(workingPressureValue).coerceAtLeast(0.0)
 
   val atmosphericPressureBar: Double
     get() = (atmosphericPressureKpa / 100.0).coerceAtLeast(0.1)
+
+  val safeLeadTimeDays: Int
+    get() = notificationLeadTimeDays.coerceIn(0, 365)
 
   val dangerThresholdGrams: Double
     get() = initialNetCo2Grams * (dangerThresholdPercent.coerceIn(0.0, 95.0) / 100.0)
@@ -89,7 +92,9 @@ data class EvaluatedLedgerSegment(
   val remainingCo2GramsAfter: Double,
   val cumulativeBubblesAfter: Double,
   val activeGramsPerBubbleAfter: Double,
-  val isCalibratedAfter: Boolean
+  val isCalibratedAfter: Boolean,
+  val didRecalibrateInSegment: Boolean = false,
+  val calibrationFeedback: String? = null
 )
 
 data class CylinderProjection(
@@ -115,11 +120,33 @@ data class CylinderProjection(
   val daysUntilRefillWindow: Double,
   val depletionTimestampMillis: Long,
   val alertTimestampMillis: Long,
-  val evaluatedAtMillis: Long
+  val evaluatedAtMillis: Long,
+  val hasActiveBurn: Boolean = dailyBurnRateGrams > 1e-6,
+  val daysUntilEmpty: Double = daysUntilDangerThreshold,
+  val emptyTimestampMillis: Long = depletionTimestampMillis,
+  val conservativeDaysUntilDanger: Double = daysUntilDangerThreshold,
+  val conservativeDepletionTimestampMillis: Long = depletionTimestampMillis,
+  val recommendedCheckInTimestampMillis: Long? = null,
+  val possibleLeakDetected: Boolean = false,
+  val latestCalibrationFeedback: String? = null
 ) {
   val isBelowDangerThreshold: Boolean
     get() = remainingCo2Grams <= config.dangerThresholdGrams + 0.01
 
+  val isEmpty: Boolean
+    get() = remainingCo2Grams <= 0.5
+
   val isInRefillWindow: Boolean
-    get() = daysUntilRefillWindow <= 0.0
+    get() = isBelowDangerThreshold || (hasActiveBurn && daysUntilRefillWindow <= 0.0)
 }
+
+data class ScaleCheckInPreview(
+  val exactConsumedGrams: Double,
+  val remainingAfterGrams: Double,
+  val resultingGramsPerBubble: Double,
+  val willRecalibrateRate: Boolean,
+  val feedbackMessage: String,
+  val possibleLeakDetected: Boolean,
+  val projectedDepletionMillis: Long,
+  val projectedEmptyMillis: Long
+)

@@ -2,7 +2,6 @@ package com.aquarium.co2tracker.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -11,9 +10,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import com.aquarium.co2tracker.ui.theme.*
 
 @Composable
@@ -27,34 +23,32 @@ fun QuickActionsRow(
 ) {
   Column(
     modifier = modifier.fillMaxWidth(),
-    verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+    verticalArrangement = Arrangement.spacedBy(Spacing.md)
   ) {
-    Text(
-      text = "Quick Actions (Immutable Ledger)",
-      fontSize = FontSizeTokens.body,
-      fontWeight = FontWeight.SemiBold,
-      color = TextPrimaryDark
+    AquaSectionHeader(
+      title = "Regulator Controls",
+      trailingLabel = "IMMUTABLE LEDGER"
     )
 
-    // 2x2 Action Buttons Grid
+    // 2x2 Precision Aquascaping Control Deck
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
-      QuickActionButton(
-        iconText = "⏱",
-        title = "± BPS Rate",
-        subtitle = "Change bubble flow",
-        accentColor = NeonCyanPrimary,
+      ControlDeckButton(
+        iconType = AquaIconType.BUBBLE_VALVE,
+        title = "Bubble Rate",
+        subtitle = "Tune BPS flow",
+        accentColor = PearlEmerald,
         onClick = onBpsClick,
         modifier = Modifier.weight(1f)
       )
 
-      QuickActionButton(
-        iconText = "💡",
+      ControlDeckButton(
+        iconType = AquaIconType.PHOTOPERIOD_ARC,
         title = "Solenoid Hours",
-        subtitle = "Adjust active timer",
-        accentColor = AquamarineSecondary,
+        subtitle = "Adjust daily timer",
+        accentColor = StarphireCyan,
         onClick = onScheduleClick,
         modifier = Modifier.weight(1f)
       )
@@ -64,45 +58,80 @@ fun QuickActionsRow(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.spacedBy(Spacing.sm)
     ) {
-      QuickActionButton(
-        iconText = "⏸",
+      ControlDeckButton(
+        iconType = AquaIconType.DOWNTIME_PAUSE,
         title = "Log Downtime",
-        subtitle = "Outage / maintenance",
-        accentColor = StatusWarning,
+        subtitle = "Outage or trim",
+        accentColor = DropCheckerAmber,
         onClick = onDowntimeClick,
         modifier = Modifier.weight(1f)
       )
 
-      QuickActionButton(
-        iconText = "⚖️",
+      ControlDeckButton(
+        iconType = AquaIconType.SCALE_BALANCE,
         title = "Scale Check-In",
-        subtitle = "Two-point calibration",
-        accentColor = StatusCalibrated,
+        subtitle = "Weight calibration",
+        accentColor = DropCheckerOptimal,
         onClick = onScaleClick,
         modifier = Modifier.weight(1f)
       )
     }
 
-    // New Refill / Reset Full Bottle Banner
-    Box(
-      modifier = Modifier
-        .fillMaxWidth()
-        .clip(RoundedCornerShape(Radius.md))
-        .background(DarkSurfaceCardElevated)
-        .border(1.dp, NeonCyanPrimary.copy(alpha = 0.3f), RoundedCornerShape(Radius.md))
-        .clickable { onRefillResetClick() }
-        .padding(Spacing.md),
-      contentAlignment = Alignment.Center
+    // Refined Full-Width Cylinder Refill & Reset Bar
+    RimlessGlassSurface(
+      modifier = Modifier.fillMaxWidth(),
+      cornerRadius = Radius.md,
+      elevated = true,
+      accentRim = PearlEmerald,
+      onClick = onRefillResetClick,
+      contentPadding = PaddingValues(horizontal = Spacing.normal, vertical = Spacing.md)
     ) {
       Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
+        horizontalArrangement = Arrangement.SpaceBetween
       ) {
-        Text(
-          text = "🔄  New Refill / Cylinder Reset",
-          fontSize = FontSizeTokens.bodySm,
-          fontWeight = FontWeight.Bold,
-          color = NeonCyanPrimary
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(Spacing.md)
+        ) {
+          Box(
+            modifier = Modifier
+              .size(IconSize.badge)
+              .clip(RoundedCornerShape(Radius.sm))
+              .background(PearlEmerald.copy(alpha = AlphaTokens.subtleTint))
+              .border(
+                StrokeTokens.hairline,
+                PearlEmerald.copy(alpha = AlphaTokens.rimSoft),
+                RoundedCornerShape(Radius.sm)
+              ),
+            contentAlignment = Alignment.Center
+          ) {
+            AquaIcon(
+              type = AquaIconType.CYLINDER_REFILL,
+              tint = PearlEmerald,
+              size = IconSize.md
+            )
+          }
+
+          Column {
+            Text(
+              text = "New Refill / Reset Cylinder",
+              style = AquaTextStyles.bodySm,
+              color = InkPrimary
+            )
+            Text(
+              text = "Start a fresh bottle cycle and archive ledger",
+              style = AquaTextStyles.caption,
+              color = InkSecondary
+            )
+          }
+        }
+
+        AquaIcon(
+          type = AquaIconType.CHEVRON_RIGHT,
+          tint = PearlEmerald,
+          size = IconSize.sm
         )
       }
     }
@@ -110,41 +139,51 @@ fun QuickActionsRow(
 }
 
 @Composable
-private fun QuickActionButton(
-  iconText: String,
+private fun ControlDeckButton(
+  iconType: AquaIconType,
   title: String,
   subtitle: String,
   accentColor: Color,
   onClick: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  Box(
-    modifier = modifier
-      .clip(RoundedCornerShape(Radius.md))
-      .background(DarkSurfaceCard)
-      .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(Radius.md))
-      .clickable { onClick() }
-      .padding(Spacing.md)
+  RimlessGlassSurface(
+    modifier = modifier,
+    cornerRadius = Radius.md,
+    onClick = onClick,
+    contentPadding = PaddingValues(Spacing.md)
   ) {
-    Column {
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
-      ) {
-        Text(text = iconText, fontSize = FontSizeTokens.body)
-        Text(
-          text = title,
-          fontSize = FontSizeTokens.bodySm,
-          fontWeight = FontWeight.Bold,
-          color = TextPrimaryDark
-        )
-      }
-      Spacer(modifier = Modifier.height(Spacing.xxs))
-      Text(
-        text = subtitle,
-        fontSize = FontSizeTokens.caption,
-        color = TextSecondaryDark
+    Box(
+      modifier = Modifier
+        .size(IconSize.badge)
+        .clip(RoundedCornerShape(Radius.sm))
+        .background(accentColor.copy(alpha = AlphaTokens.subtleTint))
+        .border(
+          StrokeTokens.hairline,
+          accentColor.copy(alpha = AlphaTokens.rimSoft),
+          RoundedCornerShape(Radius.sm)
+        ),
+      contentAlignment = Alignment.Center
+    ) {
+      AquaIcon(
+        type = iconType,
+        tint = accentColor,
+        size = IconSize.md
       )
     }
+
+    Spacer(modifier = Modifier.height(Spacing.md))
+
+    Text(
+      text = title,
+      style = AquaTextStyles.bodySm,
+      color = InkPrimary
+    )
+    Spacer(modifier = Modifier.height(Spacing.xxs))
+    Text(
+      text = subtitle,
+      style = AquaTextStyles.caption,
+      color = InkSecondary
+    )
   }
 }

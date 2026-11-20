@@ -154,7 +154,11 @@ class Co2Repository(
 
   suspend fun deleteEvent(eventId: Long): CylinderProjection? = withContext(ioDispatcher) {
     val db = dbHelper.writableDatabase
-    db.delete("ledger_events", "id = ?", arrayOf(eventId.toString()))
+    db.delete(
+      "ledger_events",
+      "id = ? AND event_type != ?",
+      arrayOf(eventId.toString(), LedgerEventType.SETUP.name)
+    )
     refreshProjection()
   }
 

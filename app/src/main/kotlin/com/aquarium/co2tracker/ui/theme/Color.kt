@@ -2,65 +2,80 @@ package com.aquarium.co2tracker.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Semantic Theme Palette - Dark-Mode-First Lush Forest Aquarium Aesthetic
-// Deep forest canopy & mossy substrates
-val ForestDeepBackground = Color(0xFF08130B)
-val ForestSurfaceCard = Color(0xFF0F2215)
-val ForestSurfaceCardElevated = Color(0xFF17301F)
-val ForestSurfaceBorder = Color(0xFF23462E)
+// ============================================================================
+// Illuminated Rimless Tank — 4-Tier Aquatic Glass Surface Architecture
+// ============================================================================
 
-// Backward compatibility references for existing components
-val CarbonBackground = ForestDeepBackground
-val DarkSurfaceCard = ForestSurfaceCard
-val DarkSurfaceCardElevated = ForestSurfaceCardElevated
-val DarkSurfaceBorder = ForestSurfaceBorder
+// Tier 0: Abyssal Obsidian Water Canvas & Overhead WRGB Caustic Glow
+val AbyssalCanvas = Color(0xFF050B0B)
+val AbyssalCanvasDeep = Color(0xFF030707)
+val OverheadLightGlow = Color(0xFF10312C)
+val OverheadLightMist = Color(0xFF0A1D1C)
 
-// Primary: Vibrant Lush Forest Sprout Emerald
-val ForestEmeraldPrimary = Color(0xFF2EE576)
-val ForestEmeraldPrimaryDim = Color(0xFF136334)
-val ForestEmeraldOnPrimary = Color(0xFF02210D)
+// Tier 1: Submerged Starphire Glass Surfaces (Cards & Panels)
+val GlassSurfaceTop = Color(0xFF102021)
+val GlassSurface = Color(0xFF0B1617)
+val GlassSurfaceBottom = Color(0xFF081213)
 
-// Backward compatibility references
-val NeonCyanPrimary = ForestEmeraldPrimary
-val NeonCyanPrimaryDim = ForestEmeraldPrimaryDim
-val NeonCyanOnPrimary = ForestEmeraldOnPrimary
+// Tier 2: Elevated Frosted Glass (Modal Sheets, Active Tiles, Floating Dock)
+val GlassSurfaceElevatedTop = Color(0xFF162B2C)
+val GlassSurfaceElevated = Color(0xFF112223)
+val GlassDockBackdrop = Color(0xEB0B1819)
 
-// Secondary: Sunlit Canopy & Fern Lime
-val ForestFernSecondary = Color(0xFF7CE778)
-val ForestFernSecondaryDim = Color(0xFF255D21)
-val ForestFernOnSecondary = Color(0xFF062505)
+// Tier 3: Inset Instrument Wells (Recessed Telemetry, Tracks, Previews)
+val GlassWell = Color(0xFF060F10)
+val GlassWellBorder = Color(0xFF152A2A)
 
-// Backward compatibility references
-val AquamarineSecondary = ForestFernSecondary
-val AquamarineSecondaryDim = ForestFernSecondaryDim
-val AquamarineOnSecondary = ForestFernOnSecondary
+// Refractive Glass Rim Highlights (Top-down LED refraction on low-iron glass)
+val StarphireRimBright = Color(0xFF335E5B)
+val StarphireRimMid = Color(0xFF1C3837)
+val StarphireRimSubtle = Color(0xFF122526)
 
-// Gauge & Status Indicators
-val GaugeTrack = Color(0xFF192D1F)
-val GaugeFillActive = ForestEmeraldPrimary
-val GaugeFillWarning = Color(0xFFFBBF24)
-val GaugeFillCritical = Color(0xFFF87171)
+// ============================================================================
+// Signature Botanical Pearl & Hardware Accents
+// ============================================================================
 
-val StatusCalibrated = ForestEmeraldPrimary
-val StatusTheoretical = Color(0xFF86EFAC)
-val StatusWarning = Color(0xFFFBBF24)
-val StatusCritical = Color(0xFFF87171)
+// Primary: Pearling Emerald (Backlit aquatic flora & live CO2 vitality)
+val PearlEmerald = Color(0xFF34E89E)
+val PearlMintGlow = Color(0xFF7AF5C1)
+val PearlEmeraldDeep = Color(0xFF135E42)
+val PearlEmeraldContainer = Color(0xFF0E3427)
+val OnPearlEmerald = Color(0xFF031F14)
 
-// Forest Mist Typography & Subtle Accents
-val TextPrimaryDark = Color(0xFFF0FDF4)
-val TextSecondaryDark = Color(0xFFA2BDA9)
-val TextTertiaryDark = Color(0xFF62846B)
-val IconSubtle = Color(0xFF7D9E85)
+// Secondary: Starphire Water Refraction & CNC Brushed Titanium Hardware
+val StarphireCyan = Color(0xFF67DCE2)
+val StarphireCyanContainer = Color(0xFF0F3136)
+val OnStarphireCyan = Color(0xFF041F22)
+val TitaniumSilver = Color(0xFFC4D6D3)
 
-// Backward compatibility references for MaterialTheme
-val primaryDark = ForestEmeraldPrimary
-val primaryContainerDark = ForestEmeraldPrimaryDim
-val secondaryDark = ForestFernSecondary
-val tertiaryDark = StatusTheoretical
-val backgroundDark = ForestDeepBackground
-val surfaceDark = ForestSurfaceCard
+// Vessel Liquid & Caustic Shimmer Tones
+val VesselLiquidBright = Color(0xFF2ED993)
+val VesselLiquidMid = Color(0xFF127A54)
+val VesselLiquidDeep = Color(0xFF093626)
+val VesselLiquidAmberBright = Color(0xFFF5B74C)
+val VesselLiquidAmberDeep = Color(0xFF5A3B0E)
+val VesselLiquidCoralBright = Color(0xFFF26D6D)
+val VesselLiquidCoralDeep = Color(0xFF591B1E)
+val VesselBubbleHighlight = Color(0xFFD8FFF0)
+val VesselSilhouetteFrond = Color(0xFF2CE097)
 
-val primaryLight = Color(0xFF156E37)
-val primaryContainerLight = Color(0xFF90F6AF)
-val secondaryLight = Color(0xFF2C6B1C)
-val tertiaryLight = Color(0xFF21684B)
+// ============================================================================
+// Drop-Checker Semantic States (Real Aquascaping Reagent Colors)
+// ============================================================================
+
+val DropCheckerOptimal = PearlEmerald          // ~30ppm optimal lime-emerald
+val DropCheckerAqua = Color(0xFF5BC7D9)        // Theoretical Gas Law baseline
+val DropCheckerAmber = Color(0xFFF5B74C)       // Refill window open / caution
+val DropCheckerCoral = Color(0xFFF26D6D)       // Below EOTD safety floor / critical
+val OnDropCheckerWarning = Color(0xFF261603)
+val OnDropCheckerCritical = Color(0xFF2A0708)
+
+// ============================================================================
+// Typography Ink Hierarchy (Starphire Glass Legibility)
+// ============================================================================
+
+val InkPrimary = Color(0xFFF0FAF7)
+val InkSecondary = Color(0xFF93B3AE)
+val InkTertiary = Color(0xFF5B7B76)
+val InkMuted = Color(0xFF3E5955)
+val GlassScrim = Color(0xB3020606)

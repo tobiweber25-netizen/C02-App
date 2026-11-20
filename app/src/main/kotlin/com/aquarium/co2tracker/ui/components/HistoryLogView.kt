@@ -5,37 +5,55 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
+import com.aquarium.co2tracker.domain.EvaluatedLedgerSegment
 import com.aquarium.co2tracker.domain.LedgerEvent
 import com.aquarium.co2tracker.domain.LedgerEventType
 import com.aquarium.co2tracker.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun HistoryLogView(
   events: List<LedgerEvent>,
   onDeleteEvent: (Long) -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  evaluatedSegments: List<EvaluatedLedgerSegment> = emptyList()
 ) {
   var eventToDelete by remember { mutableStateOf<LedgerEvent?>(null) }
+  val segmentByEventId = remember(evaluatedSegments) {
+    evaluatedSegments.associateBy { it.event.id }
+  }
 
   if (eventToDelete != null) {
     val evt = eventToDelete!!
     AlertDialog(
       onDismissRequest = { eventToDelete = null },
-      title = { Text("Delete Ledger Event?") },
+      shape = RoundedCornerShape(Radius.xl),
+      title = {
+        Text(
+          text = "Delete Ledger Event?",
+          style = AquaTextStyles.cardTitle,
+          color = InkPrimary
+        )
+      },
       text = {
-        Text("Removing '${evt.eventType.displayTitle}' will re-evaluate all past and future gas burn calculations automatically.")
+        Text(
+          text = "Removing '${evt.eventType.displayTitle}' will automatically recalculate all past and future CO2 burn projections.",
+          style = AquaTextStyles.bodySm,
+          color = InkSecondary
+        )
       },
       confirmButton = {
         Button(
@@ -43,52 +61,93 @@ fun HistoryLogView(
             onDeleteEvent(evt.id)
             eventToDelete = null
           },
-          colors = ButtonDefaults.buttonColors(containerColor = StatusCritical, contentColor = TextPrimaryDark)
+          shape = RoundedCornerShape(Radius.md),
+          colors = ButtonDefaults.buttonColors(
+            containerColor = DropCheckerCoral,
+            contentColor = OnDropCheckerCritical
+          )
         ) {
-          Text("Delete & Recalculate")
+          Text(
+            text = "Delete & Recalculate",
+            fontWeight = FontWeight.SemiBold
+          )
         }
       },
       dismissButton = {
         TextButton(onClick = { eventToDelete = null }) {
-          Text("Cancel", color = TextSecondaryDark)
+          Text(text = "Cancel", color = InkSecondary)
         }
       },
-      containerColor = DarkSurfaceCard,
-      titleContentColor = TextPrimaryDark,
-      textContentColor = TextSecondaryDark
+      containerColor = GlassSurfaceElevated,
+      titleContentColor = InkPrimary,
+      textContentColor = InkSecondary
     )
   }
 
-  Column(modifier = modifier.fillMaxSize()) {
-    Text(
-      text = "Immutable Event Ledger (${events.size} records)",
-      fontSize = FontSizeTokens.body,
-      fontWeight = FontWeight.SemiBold,
-      color = TextPrimaryDark,
-      modifier = Modifier.padding(bottom = Spacing.sm)
+  Column(
+    modifier = modifier.fillMaxSize(),
+    verticalArrangement = Arrangement.spacedBy(Spacing.md)
+  ) {
+    AquaSectionHeader(
+      title = "Immutable Event Ledger",
+      trailingLabel = "${events.size} RECORDS",
+      trailingColor = PearlEmerald
     )
 
     if (events.isEmpty()) {
       Box(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(Spacing.xl),
+          .weight(1f),
         contentAlignment = Alignment.Center
       ) {
-        Text(
-          text = "No ledger entries recorded.",
-          fontSize = FontSizeTokens.bodySm,
-          color = TextSecondaryDark
-        )
+        RimlessGlassSurface(
+          modifier = Modifier.fillMaxWidth(),
+          contentPadding = PaddingValues(Spacing.xl)
+        ) {
+          Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+          ) {
+            Box(
+              modifier = Modifier
+                .size(IconSize.xl)
+                .clip(CircleShape)
+                .background(PearlEmerald.copy(alpha = AlphaTokens.subtleTint))
+                .border(
+                  StrokeTokens.hairline,
+                  PearlEmerald.copy(alpha = AlphaTokens.rimSoft),
+                  CircleShape
+                ),
+              contentAlignment = Alignment.Center
+            ) {
+              AquaIcon(type = AquaIconType.TAB_LEDGER, tint = PearlEmerald, size = IconSize.md)
+            }
+            Text(
+              text = "No Ledger Entries Yet",
+              style = AquaTextStyles.cardTitle,
+              color = InkPrimary
+            )
+            Text(
+              text = "Every bubble-rate tweak, timer update, downtime pause, and scale weigh-in is logged here automatically.",
+              style = AquaTextStyles.bodySm,
+              color = InkSecondary
+            )
+          }
+        }
       }
     } else {
       LazyColumn(
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = Spacing.dockClearance)
       ) {
-        items(events, key = { it.id }) { event ->
-          LedgerEventCard(
+        itemsIndexed(events, key = { _, item -> item.id }) { index, event ->
+          LedgerTimelineRow(
             event = event,
+            segment = segmentByEventId[event.id],
+            isFirst = index == 0,
+            isLast = index == events.lastIndex,
             onDeleteClick = { eventToDelete = event }
           )
         }
@@ -98,105 +157,164 @@ fun HistoryLogView(
 }
 
 @Composable
-private fun LedgerEventCard(
+private fun LedgerTimelineRow(
   event: LedgerEvent,
+  segment: EvaluatedLedgerSegment?,
+  isFirst: Boolean,
+  isLast: Boolean,
   onDeleteClick: () -> Unit
 ) {
-  val dateFormatter = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
+  val dateFormatter = SimpleDateFormat("dd MMM yyyy • HH:mm", Locale.getDefault())
   val dateStr = dateFormatter.format(Date(event.timestampMillis))
 
-  val (accentColor, iconStr) = when (event.eventType) {
-    LedgerEventType.SETUP -> NeonCyanPrimary to "🚀"
-    LedgerEventType.BPS_CHANGE -> NeonCyanPrimary to "⏱"
-    LedgerEventType.SCHEDULE_CHANGE -> AquamarineSecondary to "💡"
-    LedgerEventType.DOWNTIME_OVERRIDE -> StatusWarning to "⏸"
-    LedgerEventType.SCALE_CALIBRATION -> StatusCalibrated to "⚖️"
+  val (accentColor, iconType) = when (event.eventType) {
+    LedgerEventType.SETUP -> PearlEmerald to AquaIconType.CYLINDER_REFILL
+    LedgerEventType.BPS_CHANGE -> PearlEmerald to AquaIconType.BUBBLE_VALVE
+    LedgerEventType.SCHEDULE_CHANGE -> StarphireCyan to AquaIconType.PHOTOPERIOD_ARC
+    LedgerEventType.DOWNTIME_OVERRIDE -> DropCheckerAmber to AquaIconType.DOWNTIME_PAUSE
+    LedgerEventType.SCALE_CALIBRATION -> DropCheckerOptimal to AquaIconType.SCALE_BALANCE
   }
 
-  Box(
+  val detailValue = when (event.eventType) {
+    LedgerEventType.SETUP -> "Initial fill @ ${event.bps} BPS"
+    LedgerEventType.BPS_CHANGE -> "Flow set to ${event.bps} BPS"
+    LedgerEventType.SCHEDULE_CHANGE ->
+      "Window ${formatMinuteOfDay(event.solenoidStartMinutes)} – ${formatMinuteOfDay(event.solenoidEndMinutes)}"
+    LedgerEventType.DOWNTIME_OVERRIDE -> {
+      val sign = if (event.downtimeHoursDelta >= 0) "+" else ""
+      "Override $sign${event.downtimeHoursDelta} hrs"
+    }
+    LedgerEventType.SCALE_CALIBRATION -> {
+      val grams = event.scaleWeightGrams?.roundToInt() ?: 0
+      val statusTag = when {
+        segment == null -> "Scale check-in"
+        segment.didRecalibrateInSegment -> "Rate calibrated"
+        else -> "Weight updated"
+      }
+      String.format(Locale.US, "%s • %,dg", statusTag, grams)
+    }
+  }
+
+  Row(
     modifier = Modifier
       .fillMaxWidth()
-      .clip(RoundedCornerShape(Radius.md))
-      .background(DarkSurfaceCard)
-      .border(1.dp, DarkSurfaceBorder, RoundedCornerShape(Radius.md))
-      .padding(Spacing.md)
+      .height(IntrinsicSize.Min),
+    horizontalArrangement = Arrangement.spacedBy(Spacing.md)
   ) {
-    Column {
-      Row(
+    // Left vertical aquatic timeline spine + glowing medallion node
+    Column(
+      modifier = Modifier
+        .width(VesselTokens.timelineColumnWidth)
+        .fillMaxHeight(),
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      Box(
+        modifier = Modifier
+          .width(StrokeTokens.hairline)
+          .height(Spacing.md)
+          .background(if (isFirst) Color.Transparent else StarphireRimMid)
+      )
+
+      Box(
+        modifier = Modifier
+          .size(VesselTokens.timelineNodeSize)
+          .clip(CircleShape)
+          .background(accentColor.copy(alpha = AlphaTokens.mediumTint))
+          .border(
+            StrokeTokens.hairline,
+            accentColor.copy(alpha = AlphaTokens.rimMedium),
+            CircleShape
+          ),
+        contentAlignment = Alignment.Center
+      ) {
+        AquaIcon(
+          type = iconType,
+          tint = accentColor,
+          size = IconSize.xs
+        )
+      }
+
+      Box(
+        modifier = Modifier
+          .width(StrokeTokens.hairline)
+          .weight(1f)
+          .background(if (isLast) Color.Transparent else StarphireRimMid)
+      )
+    }
+
+    // Right Frosted Glass Event Card
+    Box(
+      modifier = Modifier
+        .weight(1f)
+        .padding(bottom = Spacing.md)
+    ) {
+      RimlessGlassSurface(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        cornerRadius = Radius.md,
+        accentRim = if (isFirst) accentColor else null,
+        contentPadding = PaddingValues(Spacing.md)
       ) {
         Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(Spacing.xs)
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.Top
         ) {
-          Text(text = iconStr, fontSize = FontSizeTokens.body)
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = event.eventType.displayTitle,
+              style = AquaTextStyles.bodySm,
+              fontWeight = FontWeight.SemiBold,
+              color = InkPrimary
+            )
+            Spacer(modifier = Modifier.height(Spacing.xxs))
+            Text(
+              text = dateStr,
+              style = AquaTextStyles.monoCaption,
+              color = InkTertiary
+            )
+          }
+
+          if (event.eventType != LedgerEventType.SETUP) {
+            Box(
+              modifier = Modifier
+                .size(IconSize.lg)
+                .clip(RoundedCornerShape(Radius.xs))
+                .background(DropCheckerCoral.copy(alpha = AlphaTokens.subtleTint))
+                .clickable(onClick = onDeleteClick),
+              contentAlignment = Alignment.Center
+            ) {
+              AquaIcon(
+                type = AquaIconType.TRASH,
+                tint = DropCheckerCoral,
+                size = IconSize.xs
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(Spacing.sm))
+
+        GlassInsetWell(
+          modifier = Modifier.fillMaxWidth(),
+          cornerRadius = Radius.sm,
+          borderColor = accentColor.copy(alpha = AlphaTokens.rimSoft),
+          contentPadding = PaddingValues(horizontal = Spacing.md, vertical = Spacing.sm)
+        ) {
           Text(
-            text = event.eventType.displayTitle,
-            fontSize = FontSizeTokens.bodySm,
-            fontWeight = FontWeight.Bold,
+            text = detailValue,
+            style = AquaTextStyles.monoBody,
             color = accentColor
           )
         }
 
-        // Only allow deleting non-setup entries, or confirm delete
-        if (event.eventType != LedgerEventType.SETUP) {
+        if (event.note.isNotBlank()) {
+          Spacer(modifier = Modifier.height(Spacing.sm))
           Text(
-            text = "Delete",
-            fontSize = FontSizeTokens.caption,
-            fontWeight = FontWeight.Bold,
-            color = StatusCritical,
-            modifier = Modifier
-              .clickable { onDeleteClick() }
-              .padding(Spacing.xs)
+            text = event.note,
+            style = AquaTextStyles.caption,
+            color = InkSecondary
           )
         }
-      }
-
-      Spacer(modifier = Modifier.height(Spacing.xxs))
-
-      Text(
-        text = dateStr,
-        fontSize = FontSizeTokens.caption,
-        color = TextTertiaryDark
-      )
-
-      Spacer(modifier = Modifier.height(Spacing.xs))
-
-      val detailText = when (event.eventType) {
-        LedgerEventType.SETUP -> "Initialized cylinder fill @ ${event.bps} BPS"
-        LedgerEventType.BPS_CHANGE -> "Rate updated to ${event.bps} BPS"
-        LedgerEventType.SCHEDULE_CHANGE -> {
-          val sH = event.solenoidStartMinutes / 60
-          val sM = event.solenoidStartMinutes % 60
-          val eH = event.solenoidEndMinutes / 60
-          val eM = event.solenoidEndMinutes % 60
-          String.format("Solenoid: %02d:%02d - %02d:%02d", sH, sM, eH, eM)
-        }
-        LedgerEventType.DOWNTIME_OVERRIDE -> {
-          val sign = if (event.downtimeHoursDelta >= 0) "+" else ""
-          "Override: $sign${event.downtimeHoursDelta} hours"
-        }
-        LedgerEventType.SCALE_CALIBRATION -> {
-          "Scale Weight: ${event.scaleWeightGrams?.toInt() ?: 0}g (Calibrated)"
-        }
-      }
-
-      Text(
-        text = detailText,
-        fontSize = FontSizeTokens.bodySm,
-        fontWeight = FontWeight.Medium,
-        color = TextPrimaryDark
-      )
-
-      if (event.note.isNotBlank()) {
-        Spacer(modifier = Modifier.height(Spacing.xxs))
-        Text(
-          text = "Note: ${event.note}",
-          fontSize = FontSizeTokens.caption,
-          color = TextSecondaryDark
-        )
       }
     }
   }

@@ -1,5 +1,6 @@
 package com.aquarium.co2tracker.alarm
 
+import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,29 +15,35 @@ class BootReceiver : BroadcastReceiver() {
 
   override fun onReceive(context: Context, intent: Intent?) {
     val action = intent?.action ?: return
-    if (
+    val isPermissionStateChange =
+      action == AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
+    val isSystemWakeupEvent =
       action == Intent.ACTION_BOOT_COMPLETED ||
-      action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
-      action == Intent.ACTION_MY_PACKAGE_REPLACED ||
-      action == Intent.ACTION_TIME_CHANGED ||
-      action == Intent.ACTION_TIMEZONE_CHANGED ||
-      action == Intent.ACTION_DATE_CHANGED ||
-      action == "android.intent.action.TIME_SET" ||
-      action == "android.intent.action.DATE_CHANGED" ||
-      action == "android.intent.action.QUICKBOOT_POWERON" ||
-      action == "com.htc.intent.action.QUICKBOOT_POWERON"
-    ) {
+        action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+        action == Intent.ACTION_MY_PACKAGE_REPLACED ||
+        action == Intent.ACTION_TIME_CHANGED ||
+        action == Intent.ACTION_TIMEZONE_CHANGED ||
+        action == Intent.ACTION_DATE_CHANGED ||
+        action == "android.intent.action.TIME_SET" ||
+        action == "android.intent.action.DATE_CHANGED" ||
+        action == "android.intent.action.QUICKBOOT_POWERON" ||
+        action == "com.htc.intent.action.QUICKBOOT_POWERON"
+
+    if (isSystemWakeupEvent || isPermissionStateChange) {
       val pendingResult = goAsync()
       scope.launch {
         try {
-          Co2AlarmScheduler.enqueueDailyWatchdogWork(context)
           val repository = Co2Repository(context)
           val projection = repository.refreshProjection()
-          if (projection != null) {
+          if (isPermissionStateChange) {
+            // Upgrade any pending inexact alarm to exact now that permission state changed
             Co2AlarmScheduler.scheduleExactDepletionAlarm(context, projection)
+          } else {
+            // Catch up any alert missed while powered off and re-arm the next exact alarm
+            Co2AlarmScheduler.evaluateAndNotifyIfDue(context, projection)
           }
         } catch (_: Exception) {
-          // Graceful catch for boot and time change edge cases
+          // Graceful catch for direct-boot / credential-encrypted storage before unlock
         } finally {
           pendingResult.finish()
         }

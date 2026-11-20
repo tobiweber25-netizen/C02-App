@@ -18,37 +18,25 @@ class Co2AlarmReceiver : BroadcastReceiver() {
       try {
         val repository = Co2Repository(context)
         val projection = repository.refreshProjection()
-
-        if (projection != null) {
-          // Dynamic calculation at the exact moment the alarm fires
-          Co2AlarmScheduler.showRefillNotification(
-            context = context,
-            remainingGrams = projection.remainingCo2Grams.coerceAtLeast(0.0),
-            depletionMillis = projection.depletionTimestampMillis,
-            leadTimeDays = projection.config.notificationLeadTimeDays,
-            isUrgentEmpty = projection.isBelowDangerThreshold
-          )
-          // Re-arm exact alarm for final depletion moment
-          Co2AlarmScheduler.scheduleExactDepletionAlarm(context, projection)
-        } else {
-          // Fallback to extras if database unavailable
-          val remainingGrams = (intent?.getDoubleExtra("REMAINING_GRAMS", 0.0) ?: 0.0).coerceAtLeast(0.0)
-          val depletionMillis = intent?.getLongExtra("DEPLETION_MILLIS", System.currentTimeMillis()) ?: System.currentTimeMillis()
-          val leadTimeDays = intent?.getIntExtra("LEAD_TIME_DAYS", 5) ?: 5
+        Co2AlarmScheduler.evaluateAndNotifyIfDue(context, projection)
+      } catch (_: Exception) {
+        // Fallback to intent extras only if database could not be read
+        if (intent != null && intent.hasExtra("DEPLETION_MILLIS")) {
+          val remainingGrams = intent.getDoubleExtra("REMAINING_GRAMS", 0.0).coerceAtLeast(0.0)
+          val depletionMillis = intent.getLongExtra("DEPLETION_MILLIS", System.currentTimeMillis())
+          val leadTimeDays = intent.getIntExtra("LEAD_TIME_DAYS", 5)
 
           Co2AlarmScheduler.showRefillNotification(
             context = context,
             remainingGrams = remainingGrams,
             depletionMillis = depletionMillis,
             leadTimeDays = leadTimeDays,
-            isUrgentEmpty = remainingGrams <= 0.0
+            isUrgentEmpty = remainingGrams <= 0.5 || depletionMillis <= System.currentTimeMillis()
           )
         }
-      } catch (_: Exception) {
       } finally {
         pendingResult.finish()
       }
     }
   }
 }
-
